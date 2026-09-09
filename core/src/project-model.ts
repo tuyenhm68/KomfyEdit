@@ -17,7 +17,10 @@ export const transitionTypeValues = [
   'wipe-down',
 ] as const
 export const trackTypeValues = ['default', 'subtitle'] as const
-export const trackKindValues = ['video', 'audio'] as const
+// 'sticker' rows are overlay rows that only ever hold stickers. They are kept
+// apart from 'video' so a sticker never lands on a track holding footage or
+// text, and so the timeline can draw them shorter than a real video row.
+export const trackKindValues = ['video', 'audio', 'sticker'] as const
 export const subtitlePositionValues = ['bottom', 'top', 'center'] as const
 export const fontWeightValues = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'] as const
 export const fontStyleValues = ['normal', 'italic'] as const
@@ -72,9 +75,10 @@ export const trackSchema = z.object({
 // One of each to start. Extra tracks appear when they are
 // actually needed — an overlay with nowhere free to go, or an explicit
 // "Add track". Existing projects keep whatever tracks they were saved with.
+// The video track alone. An audio row appears when audio is added and not
+// before — an empty A1 on a brand-new project is a row with nothing to say.
 export const DEFAULT_TRACKS = trackSchema.array().parse([
   { id: 'track-v1', name: 'V1', muted: false, locked: false, sourcePatched: true, kind: 'video' },
-  { id: 'track-a1', name: 'A1', muted: false, locked: false, sourcePatched: true, kind: 'audio' },
 ])
 
 export const subtitleClipSchema = z.object({

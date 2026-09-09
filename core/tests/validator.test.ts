@@ -279,7 +279,7 @@ describe('S1-3: Timeline validation commit gate (validateTimeline)', () => {
 
   // ── 6. State immutability & reference equality upon rejection ────────────
   describe('Gate rejection behavior and state reference equality', () => {
-    it('returns exact same state reference (identity unchanged) when mutation is rejected', () => {
+    it('leaves the timeline untouched when a mutation is rejected', () => {
       const initialState = createMockState()
       expect(initialState.editorModel.timelines.length).toBeGreaterThan(0)
 
@@ -290,8 +290,14 @@ describe('S1-3: Timeline validation commit gate (validateTimeline)', () => {
         clips: [...timeline.clips, invalidClip],
       }))
 
-      // Must be EXACT same reference
-      expect(nextState).toBe(initialState)
+      // The document must be the very same object — a rejected edit changes
+      // nothing on the timeline, and undo is keyed on that identity, so this is
+      // also what keeps a refusal out of the undo history.
+      expect(nextState.editorModel).toBe(initialState.editorModel)
+
+      // The state itself does change, carrying the reason so the editor can
+      // tell the user why the control appeared to do nothing.
+      expect(nextState.session.ui.lastRejectedEdit?.rule).toBe('CLIP_INVALID_TRACK')
 
       // Structured error must be recorded
       const lastErr = getLastTimelineValidationError()
@@ -301,7 +307,7 @@ describe('S1-3: Timeline validation commit gate (validateTimeline)', () => {
       expect(lastErr?.errors[0].entityId).toBe('invalid-clip')
     })
 
-    it('returns exact same state reference when attempting to modify locked track', () => {
+    it('leaves the timeline untouched when writing to a locked track', () => {
       const clip = createMockClip({ id: 'c-locked', trackIndex: 0, startTime: 0, duration: 5 })
       const state = createMockState([clip], [
         { id: 'v1', name: 'V1', kind: 'video', muted: false, locked: true },
@@ -314,8 +320,9 @@ describe('S1-3: Timeline validation commit gate (validateTimeline)', () => {
         clips: [],
       }))
 
-      expect(attemptedState).toBe(stateBeforeInvalidMutation)
+      expect(attemptedState.editorModel).toBe(stateBeforeInvalidMutation.editorModel)
       expect(getLastTimelineValidationError()?.errors[0].rule).toBe('LOCKED_TRACK_MODIFIED')
+      expect(attemptedState.session.ui.lastRejectedEdit?.rule).toBe('LOCKED_TRACK_MODIFIED')
     })
   })
 

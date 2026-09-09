@@ -6,7 +6,7 @@ import {
   isValidStickerId,
   resolveStickerRelativePath,
   DEFAULT_STICKER_DURATION,
-  DEFAULT_STICKER_SCALE,
+  DEFAULT_STICKER_PIXELS,
 } from '../src/stickers'
 import {
   createInitialEditorState,
@@ -116,7 +116,11 @@ describe('addStickerClip action', () => {
     expect(stickerClip?.type).toBe('image')
     expect(stickerClip?.startTime).toBe(1.5)
     expect(stickerClip?.duration).toBe(DEFAULT_STICKER_DURATION)
-    expect(stickerClip?.transform.scale).toBe(DEFAULT_STICKER_SCALE)
+    // The scale is derived from the frame so the sticker lands about
+    // DEFAULT_STICKER_PIXELS across, rather than being a fixed percentage that
+    // would be tiny on a 4K timeline and huge on a small one.
+    const shortEdge = 512 // no width/height on this timeline, so it comes from the asset
+    expect((stickerClip!.transform.scale / 100) * shortEdge).toBeCloseTo(DEFAULT_STICKER_PIXELS, 0)
     expect(stickerClip?.importedName).toContain('Ngôi sao vàng')
 
     // An asset must be registered in editorModel.assets

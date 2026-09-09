@@ -74,3 +74,12 @@ graph TD
 1. **Zero External Backend**: Completely self-contained desktop app with no tracking, cloud accounts, or telemetry.
 2. **Bundled Media Engine**: Standalone FFmpeg integration handles decoding, thumbnail generation, waveform extraction, and multi-track rendering.
 3. **Deterministic AI Edits**: AI agents manipulate the timeline strictly through atomic, validated, and reversible `EditPatch` operations via MCP.
+
+---
+
+## ⚖️ Acknowledgements & License / Ghi nhận & Bản quyền
+
+- **Acknowledgements**: KomfyEdit references and adapts foundational architecture from [LTX Desktop](https://github.com/Lightricks/LTX-Desktop) by Lightricks Ltd. (under Apache-2.0). See [NOTICES.md](../NOTICES.md) and [LICENSE.txt](../LICENSE.txt).
+- **Free for Non-Commercial Use**: KomfyEdit is 100% free for personal, non-commercial, and educational usage. Commercial distribution or monetization is prohibited without prior authorization.
+- **License**: Core software is released under the [Apache-2.0 License](../LICENSE.txt).
+

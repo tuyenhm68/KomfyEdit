@@ -978,3 +978,8 @@ export function selectSortedAssets(state: EditorState, filters: AssetListFilters
 export function selectVisibleAssets(state: EditorState, filters: AssetListFilters): Asset[] {
   return selectSortedAssets(state, filters)
 }
+
+/** Why the last edit was refused, or null when nothing was. */
+export function selectLastRejectedEdit(state: EditorState): { rule: string; message: string } | null {
+  return state.session.ui.lastRejectedEdit
+}

@@ -69,6 +69,7 @@ import {
 } from '@core/edit-patch'
 import { undo } from './editor/editor-actions'
 import { SubtitleTrackStyleEditor } from './editor/SubtitleTrackStyleEditor'
+import { RejectedEditNotice } from './editor/RejectedEditNotice'
 
 function getStructuralFingerprint(model: EditorModel): string {
   const activeTimeline = model.timelines.find(t => t.id === model.activeTimelineId) ?? model.timelines[0]
@@ -515,7 +516,7 @@ function VideoEditorWithStore({ currentProject, saveProject }: VideoEditorProps)
   // --- Render ---
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-black">
+    <div className="relative flex h-full flex-col overflow-hidden bg-black">
       <EditorTitleBar
         menus={menuDefinitions}
         projectName={currentProject?.name || 'Untitled'}
@@ -676,6 +677,9 @@ function VideoEditorWithStore({ currentProject, saveProject }: VideoEditorProps)
       )}
 
       {showProjectSettingsModal && <ProjectSettingsModal />}
+
+      {/* Says why an edit was refused, instead of the control looking dead. */}
+      <RejectedEditNotice />
 
       {showImportTimelineModal && (
         <ImportTimelineModal projectId={currentProjectId} />

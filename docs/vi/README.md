@@ -31,4 +31,12 @@ Dành cho các kỹ sư phần mềm muốn tìm hiểu kiến trúc hoặc đó
 
 ---
 
+## ⚖️ Ghi nhận nguồn gốc & Điều khoản sử dụng
+
+- **Ghi nhận nguồn gốc (Acknowledgements)**: Mã nguồn của KomfyEdit có tham khảo và kế thừa nền tảng kiến trúc từ dự án [LTX Desktop](https://github.com/Lightricks/LTX-Desktop) của Lightricks Ltd. (phát hành theo giấy phép Apache-2.0). Mọi thông tin ghi nhận quyền tác giả gốc được lưu giữ nguyên vẹn trong [NOTICES.md](../../NOTICES.md) và [LICENSE.txt](../../LICENSE.txt).
+- **Miễn phí phi thương mại (Free for Non-Commercial Use)**: KomfyEdit được phát hành hoàn toàn miễn phí cho mục đích sử dụng cá nhân, học tập, sáng tạo nội dung và nghiên cứu phi thương mại. Nghiêm cấm mọi hình thức thương mại hóa, bán lại hoặc thu phí mà không có sự cho phép trước bằng văn bản.
+- **Giấy phép mã nguồn**: Phần mềm được phát hành theo giấy phép mã nguồn mở [Apache-2.0 License](../../LICENSE.txt).
+
+---
+
 [← Quay lại Cổng tài liệu tổng](../README.md) · [Read English Documentation →](../en/README.md)

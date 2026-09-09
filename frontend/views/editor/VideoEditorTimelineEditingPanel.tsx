@@ -10,6 +10,7 @@ import {
 } from './video-editor-utils'
 import { applyStateAction } from './editor-actions'
 import { CUT_TOLERANCE, findCutPoints, findJunctionNear, findJunctions, nearestCut } from '@core/timeline-cuts'
+import { trackRowHeight } from '@core/timeline-rows'
 import { planBorrow } from '@core/timeline-transitions'
 import {
   DEFAULT_TRANSITION_DURATION,
@@ -219,11 +220,15 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     actions.splitClipsAtTime(batchClipIds ?? [clipId], atTime ?? getCurrentTime())
   }, [actions, getCurrentTime])
   const updateClip = useCallback((id: string, patch: Partial<TimelineClip>) => { actions.updateClip(id, patch) }, [actions])
+  const setClipSpeed = useCallback((id: string, speed: number, duration?: number) => {
+    actions.setClipSpeed(id, speed, duration)
+  }, [actions])
   const updateAsset = useCallback((_projectId: string, assetId: string, updates: Partial<Asset>) => {
     actions.updateAsset(assetId, updates)
   }, [actions])
   const addClipToTimeline = useCallback((asset: Asset, trackIndex: number, startTime?: number) => {
-    actions.insertAssetsToTimeline({ assets: [asset], trackIndex, startTime })
+    // Add puts the asset in front of the existing edit on V1, CapCut-style.
+    actions.insertAssetsToTimeline({ assets: [asset], trackIndex, startTime, position: 'start' })
   }, [actions])
   const resolveClipPath = useCallback((clip: TimelineClip | null) => clip ? selectClipPathFromAssets(assets, clip) : '', [assets])
   const getMaxClipDuration = useCallback((clip: TimelineClip) => selectClipMaxDurationFromAssets(assets, clip), [assets])
@@ -252,6 +257,10 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
   const [videoTrackHeight, setVideoTrackHeight] = useState(56)
   const [audioTrackHeight, setAudioTrackHeight] = useState(56)
   const [subtitleTrackHeight, setSubtitleTrackHeight] = useState(40)
+  // Shorter on purpose: a sticker row carries a small overlay, not footage, and
+  // a project often stacks several of them. Fixed rather than resizable — there
+  // is nothing inside a sticker clip that rewards extra height.
+  const stickerTrackHeight = 34
   const suppressGapClickRef = useRef(false)
   const [selectedGapAnchor, setSelectedGapAnchor] = useState<GapAnchor>(null)
   const [selectedGap, setSelectedGap] = useState<GapSelection>(null)
@@ -303,23 +312,9 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     setTracks(tracks.filter((_, trackIndex) => trackIndex !== idx))
   }, [clips, setClips, setSubtitles, setTracks, tracks])
 
-  // Ensure there is always at least one empty audio track at the bottom
-  useEffect(() => {
-    const audioTrackIndices = tracks
-      .map((t, i) => ({ t, i }))
-      .filter(e => e.t.kind === 'audio')
-
-    if (audioTrackIndices.length === 0) {
-      actions.addTrack('audio')
-      return
-    }
-
-    const lastAudio = audioTrackIndices[audioTrackIndices.length - 1]
-    const lastAudioHasClips = clips.some(c => c.trackIndex === lastAudio.i)
-    if (lastAudioHasClips) {
-      actions.addTrack('audio')
-    }
-  }, [tracks, clips, actions])
+  // No effect keeping a spare audio row here on purpose. A new project opens
+  // with the video track only; dropping audio builds the track it needs
+  // (buildDroppedAudioClipInsertion) and +A adds one by hand.
 
   const addSubtitleClip = useCallback((trackIndex: number) => {
     const subtitle: SubtitleClip = {
@@ -460,12 +455,15 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     return map
   }, [orderedTracks])
 
-  const getTrackHeight = useCallback((trackIndex: number): number => {
-    const track = tracks[trackIndex]
-    if (!track) return videoTrackHeight
-    if (track.type === 'subtitle') return subtitleTrackHeight
-    return track.kind === 'audio' ? audioTrackHeight : videoTrackHeight
-  }, [tracks, videoTrackHeight, audioTrackHeight, subtitleTrackHeight])
+  const rowHeights = useMemo(() => ({
+    video: videoTrackHeight,
+    audio: audioTrackHeight,
+    subtitle: subtitleTrackHeight,
+    sticker: stickerTrackHeight,
+  }), [videoTrackHeight, audioTrackHeight, subtitleTrackHeight, stickerTrackHeight])
+
+  const getTrackHeight = useCallback((trackIndex: number): number =>
+    trackRowHeight(tracks[trackIndex], rowHeights), [tracks, rowHeights])
 
   const trackTopPx = useCallback((realTrackIndex: number, padding = 0): number => {
     const displayRow = trackDisplayRow.get(realTrackIndex) ?? realTrackIndex
@@ -473,7 +471,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     for (let r = 0; r < displayRow; r++) {
       const entry = orderedTracks[r]
       if (entry) {
-        top += entry.track.type === 'subtitle' ? subtitleTrackHeight : entry.track.kind === 'audio' ? audioTrackHeight : videoTrackHeight
+        top += trackRowHeight(entry.track, rowHeights)
       }
     }
     return top + padding
@@ -832,6 +830,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                   videoTrackHeight={videoTrackHeight}
                   audioTrackHeight={audioTrackHeight}
                   subtitleTrackHeight={subtitleTrackHeight}
+                  stickerTrackHeight={stickerTrackHeight}
                   setVideoTrackHeight={setVideoTrackHeight}
                   setAudioTrackHeight={setAudioTrackHeight}
                   setSubtitleTrackHeight={setSubtitleTrackHeight}
@@ -871,6 +870,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
                   videoTrackHeight={videoTrackHeight}
                   audioTrackHeight={audioTrackHeight}
                   subtitleTrackHeight={subtitleTrackHeight}
+                  stickerTrackHeight={stickerTrackHeight}
                   trackTopPx={trackTopPx}
                   getTrackHeight={getTrackHeight}
                   handleTimelineScroll={handleTimelineScroll}
@@ -946,6 +946,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
           splitClipAtPlayhead={splitClipAtPlayhead}
           removeClip={removeClip}
           updateClip={updateClip}
+          setClipSpeed={setClipSpeed}
           getLiveAsset={getLiveAsset}
           getMaxClipDuration={getMaxClipDuration}
           onRevealAsset={onRevealAsset}

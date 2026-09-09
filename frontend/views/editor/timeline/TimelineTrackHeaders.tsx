@@ -1,4 +1,5 @@
 import React from 'react'
+import { trackRowHeight } from '@core/timeline-rows'
 import {
   Plus, Trash2,
   Volume2, VolumeX,
@@ -10,6 +11,7 @@ import {
   Music,
   Type,
   Image as ImageIcon,
+  Sticker,
 } from 'lucide-react'
 import { Tooltip } from '../../../components/ui/tooltip'
 import type { Track, SubtitleClip, TimelineClip } from '../../../types/project-model'
@@ -17,11 +19,15 @@ import { useTranslation } from '../../../i18n/I18nContext'
 import { useEditorStore } from '../editor-store'
 import { selectClips } from '../editor-selectors'
 
-export type TrackContentType = 'subtitle' | 'audio' | 'text' | 'adjustment' | 'image' | 'video'
+export type TrackContentType = 'subtitle' | 'audio' | 'sticker' | 'text' | 'adjustment' | 'image' | 'video'
 
 export function getTrackContentType(track: Track, realIndex: number, clips: TimelineClip[]): TrackContentType {
   if (track.type === 'subtitle') return 'subtitle'
   if (track.kind === 'audio') return 'audio'
+  // Read the kind, not the clips on it: a sticker clip is an image clip, so
+  // inspecting contents would show a sticker row the same picture icon a photo
+  // row gets, which is exactly the confusion the separate kind removes.
+  if (track.kind === 'sticker') return 'sticker'
 
   const trackClips = clips.filter(c => c.trackIndex === realIndex)
   if (trackClips.length > 0) {
@@ -71,6 +77,7 @@ export const typeLabelMap: Record<TrackContentType, string> = {
   audio: 'Audio',
   text: 'Text',
   adjustment: 'Adjustment',
+  sticker: 'Sticker',
   image: 'Image',
   video: 'Video',
 }
@@ -81,6 +88,7 @@ export function getTrackTypeLabel(contentType: TrackContentType, t: (key: string
     case 'audio': return t('timeline.trackTypes.audio')
     case 'text': return t('timeline.trackTypes.text')
     case 'adjustment': return t('timeline.trackTypes.adjustment')
+    case 'sticker': return t('timeline.trackTypes.sticker')
     case 'image': return t('timeline.trackTypes.image')
     case 'video':
     default:
@@ -98,6 +106,8 @@ export function renderTrackIcon(contentType: TrackContentType, muted?: boolean) 
       return <Type className="h-3.5 w-3.5 flex-shrink-0 text-cyan-400/90" />
     case 'adjustment':
       return <Layers className="h-3.5 w-3.5 flex-shrink-0 text-blue-400/90" />
+    case 'sticker':
+      return <Sticker className="h-3.5 w-3.5 flex-shrink-0 text-orange-400/90" />
     case 'image':
       return <ImageIcon className="h-3.5 w-3.5 flex-shrink-0 text-purple-400/90" />
     case 'video':
@@ -123,6 +133,7 @@ export interface TimelineTrackHeadersProps {
   videoTrackHeight: number
   audioTrackHeight: number
   subtitleTrackHeight: number
+  stickerTrackHeight: number
   setVideoTrackHeight: (height: number) => void
   setAudioTrackHeight: (height: number) => void
   setSubtitleTrackHeight: (height: number) => void
@@ -146,6 +157,7 @@ export const TimelineTrackHeaders: React.FC<TimelineTrackHeadersProps> = ({
   videoTrackHeight,
   audioTrackHeight,
   subtitleTrackHeight,
+  stickerTrackHeight,
   setVideoTrackHeight,
   setAudioTrackHeight,
   setSubtitleTrackHeight,
@@ -212,7 +224,7 @@ export const TimelineTrackHeaders: React.FC<TimelineTrackHeadersProps> = ({
                       ? 'px-1.5 flex flex-col justify-center gap-0'
                       : 'px-2 flex items-center justify-between'
                   }`}
-                  style={{ height: track.type === 'subtitle' ? subtitleTrackHeight : track.kind === 'audio' ? audioTrackHeight : videoTrackHeight }}
+                  style={{ height: trackRowHeight(track, { video: videoTrackHeight, audio: audioTrackHeight, subtitle: subtitleTrackHeight, sticker: stickerTrackHeight }) }}
                 >
                   {track.type === 'subtitle' ? (
                     <>

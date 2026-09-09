@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react'
 import type { TimelineClip, Track, SubtitleClip, Asset, EffectType } from '../../../types/project-model'
 import type { ToolType } from '../video-editor-utils'
 import { isExternalFileDrag, hasMediaFiles } from '../external-file-drop'
+import { trackRowHeight } from '@core/timeline-rows'
 import {
   TimelineClipItem,
   SCISSORS_CURSOR,
@@ -44,6 +45,7 @@ export interface TimelineTracksViewProps {
   assets: Asset[]
   videoTrackHeight: number
   audioTrackHeight: number
+  stickerTrackHeight: number
   subtitleTrackHeight: number
   trackTopPx: (trackIndex: number, padding?: number) => number
   getTrackHeight: (trackIndex: number) => number
@@ -113,6 +115,7 @@ export const TimelineTracksView: React.FC<TimelineTracksViewProps> = ({
   assets,
   videoTrackHeight,
   audioTrackHeight,
+  stickerTrackHeight,
   subtitleTrackHeight,
   trackTopPx,
   getTrackHeight,
@@ -151,6 +154,13 @@ export const TimelineTracksView: React.FC<TimelineTracksViewProps> = ({
      or shrinking a band re-times the effect on screen and leaves every clip
      edge exactly where the user put it. */
   const clipExtents = useMemo(() => clipEdgeExtents(cutPoints), [cutPoints])
+
+  const rowHeights = useMemo(() => ({
+    video: videoTrackHeight,
+    audio: audioTrackHeight,
+    subtitle: subtitleTrackHeight,
+    sticker: stickerTrackHeight,
+  }), [videoTrackHeight, audioTrackHeight, subtitleTrackHeight, stickerTrackHeight])
 
   const handlePlayheadMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
@@ -232,9 +242,7 @@ export const TimelineTracksView: React.FC<TimelineTracksViewProps> = ({
           let trackIndex = -1
           let accY = 0
           for (const entry of orderedTracks) {
-            const th = entry.track.type === 'subtitle'
-              ? subtitleTrackHeight
-              : entry.track.kind === 'audio' ? audioTrackHeight : videoTrackHeight
+            const th = trackRowHeight(entry.track, rowHeights)
             if (y >= accY && y < accY + th) {
               trackIndex = entry.realIndex
               break
@@ -304,7 +312,7 @@ export const TimelineTracksView: React.FC<TimelineTracksViewProps> = ({
                   let clickedRealTrackIndex = -1
                   let accY = 0
                   for (const entry of orderedTracks) {
-                    const th = entry.track.type === 'subtitle' ? subtitleTrackHeight : entry.track.kind === 'audio' ? audioTrackHeight : videoTrackHeight
+                    const th = trackRowHeight(entry.track, rowHeights)
                     if (clickY >= accY && clickY < accY + th) {
                       clickedRealTrackIndex = entry.realIndex
                       break
@@ -335,7 +343,7 @@ export const TimelineTracksView: React.FC<TimelineTracksViewProps> = ({
               <div
                 data-track-bg="true"
                 className={`border-b border-zinc-800/60 bg-zinc-950 ${track.locked ? 'opacity-50' : ''}`}
-                style={{ height: track.type === 'subtitle' ? subtitleTrackHeight : track.kind === 'audio' ? audioTrackHeight : videoTrackHeight }}
+                style={{ height: trackRowHeight(track, rowHeights) }}
                 onDrop={(e) => {
                   e.stopPropagation()
                   if (track.type === 'subtitle') {

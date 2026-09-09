@@ -16,11 +16,15 @@ export function resolveStickerPath(stickerIdOrPath: string): string {
   }
 
   const def = getStickerDefinition(stickerIdOrPath)
+  // Take the basename: a stored sticker path is `stickers/fire.png`, and
+  // joining that onto the stickers directory would look for
+  // `.../stickers/stickers/fire.png`.
+  const bare = stickerIdOrPath.replace(/\\/g, '/').split('/').pop() || stickerIdOrPath
   const filename = def
     ? def.filename
-    : stickerIdOrPath.endsWith('.png') || stickerIdOrPath.endsWith('.webp')
-      ? stickerIdOrPath
-      : `${stickerIdOrPath}.png`
+    : bare.endsWith('.png') || bare.endsWith('.webp')
+      ? bare
+      : `${bare}.png`
 
   // 1. Packaged electron resources
   if (process.resourcesPath) {

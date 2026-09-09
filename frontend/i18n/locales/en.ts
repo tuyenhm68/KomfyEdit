@@ -343,6 +343,7 @@ export const en = {
       subtitle: 'Subtitles',
       text: 'Text',
       adjustment: 'Adjustment',
+      sticker: 'Sticker',
       image: 'Image',
     },
     addVideoTrack: 'Add video track',

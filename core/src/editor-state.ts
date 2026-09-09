@@ -115,6 +115,16 @@ export interface EditorUiState {
   cropMode: boolean
   maskMode: boolean
   eyedropperMode: boolean
+  /**
+   * Why the last edit was refused, or null when nothing was.
+   *
+   * The timeline validator turns down edits that would break an invariant —
+   * a gap on the magnetic track, a write to a locked one. That rejection used
+   * to be recorded in a module variable nothing read, so from the user's side
+   * the control simply did nothing. Keeping it in session state lets the UI
+   * say what happened.
+   */
+  lastRejectedEdit: { rule: string; message: string } | null
 }
 
 export interface EditorSessionState {
@@ -299,6 +309,7 @@ export function createInitialEditorState(
         cropMode: false,
         maskMode: false,
         eyedropperMode: false,
+        lastRejectedEdit: null,
       },
       clipboard: {
         kind: null,

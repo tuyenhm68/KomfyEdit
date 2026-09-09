@@ -1,7 +1,6 @@
 import type { TimelineClip, TransitionType, Track, ClipEffect, SubtitleClip, ClipMask } from './project-model'
 import { DEFAULT_CLIP_TRANSFORM, DEFAULT_COLOR_CORRECTION } from './project-model'
 import { cssMixBlendModeFor } from './blend-modes'
-import { makeId } from './id-generator'
 import { sampleClipAt, hasKeyframesForProperty } from './keyframes'
 
 // ── Tool types & definitions ────────────────────────────────────────
@@ -262,8 +261,11 @@ export function pruneEmptyOverlayTracks(
   const videoTrackIndices = tracks
     .map((track, idx) => ({ track, idx }))
     .filter(e => e.track.kind === 'video' && e.track.type !== 'subtitle')
+  const stickerTrackIndices = tracks
+    .map((track, idx) => ({ track, idx }))
+    .filter(e => e.track.kind === 'sticker')
 
-  if (videoTrackIndices.length <= 1) {
+  if (videoTrackIndices.length <= 1 && stickerTrackIndices.length === 0) {
     return { tracks, clips, subtitles }
   }
 
@@ -277,6 +279,15 @@ export function pruneEmptyOverlayTracks(
     }
   }
 
+  // Sticker rows have no protected first row: they exist only to carry
+  // stickers, so an empty one is a row the user has to look past. Adding a
+  // sticker builds a fresh row whenever it needs one.
+  for (const entry of stickerTrackIndices) {
+    if (!clips.some(c => c.trackIndex === entry.idx)) {
+      tracksToRemove.add(entry.idx)
+    }
+  }
+
   if (tracksToRemove.size === 0) {
     return { tracks, clips, subtitles }
   }
@@ -285,6 +296,7 @@ export function pruneEmptyOverlayTracks(
   const oldToNewIndex = new Map<number, number>()
 
   let videoCounter = 1
+  let stickerCounter = 1
   for (let i = 0; i < tracks.length; i++) {
     if (tracksToRemove.has(i)) {
       continue
@@ -295,6 +307,11 @@ export function pruneEmptyOverlayTracks(
       newTracks.push({
         ...track,
         name: `V${videoCounter++}`,
+      })
+    } else if (track.kind === 'sticker') {
+      newTracks.push({
+        ...track,
+        name: `S${stickerCounter++}`,
       })
     } else {
       newTracks.push(track)
@@ -312,92 +329,6 @@ export function pruneEmptyOverlayTracks(
   }))
 
   return { tracks: newTracks, clips: newClips, subtitles: newSubtitles }
-}
-
-/**
- * Ensures there is always at least one empty audio track at the bottom of the timeline.
- * - If no audio track exists, appends A1.
- * - If the bottom-most audio track contains clips, appends a new empty audio track (A2, A3, ...).
- * - If there are redundant consecutive empty audio tracks at the end (2 or more), prunes them down to keep exactly one.
- */
-export function ensureTrailingEmptyAudioTrack(
-  tracks: Track[],
-  clips: TimelineClip[],
-  subtitles: SubtitleClip[] = [],
-): { tracks: Track[]; clips: TimelineClip[]; subtitles: SubtitleClip[] } {
-  const audioEntries = tracks
-    .map((track, idx) => ({ track, idx }))
-    .filter(e => e.track.kind === 'audio')
-
-  // If no audio track exists at all, append A1
-  if (audioEntries.length === 0) {
-    const newTrack: Track = {
-      id: makeId('track-audio'),
-      name: 'A1',
-      muted: false,
-      locked: false,
-      kind: 'audio',
-    }
-    return {
-      tracks: [...tracks, newTrack],
-      clips,
-      subtitles,
-    }
-  }
-
-  const lastAudio = audioEntries[audioEntries.length - 1]
-  const lastHasClips = clips.some(c => c.trackIndex === lastAudio.idx)
-
-  if (lastHasClips) {
-    // The bottom-most audio track has clips -> append a new empty audio track
-    const newTrack: Track = {
-      id: makeId('track-audio'),
-      name: `A${audioEntries.length + 1}`,
-      muted: false,
-      locked: false,
-      kind: 'audio',
-    }
-    return {
-      tracks: [...tracks, newTrack],
-      clips,
-      subtitles,
-    }
-  }
-
-  // If there are redundant trailing empty audio tracks (2 or more), prune down to exactly one
-  let currentTracks = tracks
-  let currentClips = clips
-  let currentSubtitles = subtitles
-  let modified = false
-
-  while (true) {
-    const currentAudioEntries = currentTracks
-      .map((track, idx) => ({ track, idx }))
-      .filter(e => e.track.kind === 'audio')
-
-    if (currentAudioEntries.length < 2) break
-
-    const last = currentAudioEntries[currentAudioEntries.length - 1]
-    const secondLast = currentAudioEntries[currentAudioEntries.length - 2]
-    const lastHasClips = currentClips.some(c => c.trackIndex === last.idx)
-    const secondLastHasClips = currentClips.some(c => c.trackIndex === secondLast.idx)
-
-    if (!lastHasClips && !secondLastHasClips && !last.track.locked && !last.track.muted) {
-      const pruneIdx = last.idx
-      currentTracks = currentTracks.filter((_, idx) => idx !== pruneIdx)
-      currentClips = currentClips.map(c => c.trackIndex > pruneIdx ? { ...c, trackIndex: c.trackIndex - 1 } : c)
-      currentSubtitles = currentSubtitles.map(s => s.trackIndex > pruneIdx ? { ...s, trackIndex: s.trackIndex - 1 } : s)
-      modified = true
-    } else {
-      break
-    }
-  }
-
-  if (modified) {
-    return { tracks: currentTracks, clips: currentClips, subtitles: currentSubtitles }
-  }
-
-  return { tracks, clips, subtitles }
 }
 
 export function clampVal(val: number, limits: { min: number; max: number }): number {
@@ -949,3 +880,137 @@ export function parseTime(
 // ── Keyframe sampling & utilities ──────────────────────────────────
 export * from './keyframes'
 
+
+/**
+ * Removes every track nothing is sitting on.
+ *
+ * An empty row is a row the user has to scroll past and aim around, and the
+ * editor used to leave a trail of them: an overlay that was cleared, an audio
+ * row kept "ready" for a drop, a sticker row whose sticker was deleted.
+ *
+ * Three rows are spared:
+ *  - the first video track, so there is always somewhere to drop the first clip
+ *  - subtitle tracks, whose contents live in `subtitles` rather than `clips`
+ *  - locked tracks: locking a row is the user saying leave it alone, and an
+ *    empty locked row is usually one being held open on purpose
+ *
+ * Nothing is lost by pruning aggressively: dropping media builds whatever track
+ * it needs (see buildDroppedAudioClipInsertion and addStickerClip), and +V / +A
+ * still add one by hand.
+ */
+export function pruneEmptyTracks(
+  tracks: Track[],
+  clips: TimelineClip[],
+  subtitles: SubtitleClip[] = [],
+): { tracks: Track[]; clips: TimelineClip[]; subtitles: SubtitleClip[] } {
+  const firstVideoIndex = tracks.findIndex(track => track.kind === 'video' && track.type !== 'subtitle')
+
+  const isOccupied = (index: number) =>
+    clips.some(clip => clip.trackIndex === index)
+    || subtitles.some(sub => sub.trackIndex === index)
+
+  const removed = new Set<number>()
+  tracks.forEach((track, index) => {
+    if (index === firstVideoIndex) return
+    if (track.type === 'subtitle') return
+    if (track.locked) return
+    if (isOccupied(index)) return
+    removed.add(index)
+  })
+
+  if (removed.size === 0) {
+    return { tracks, clips, subtitles }
+  }
+
+  const oldToNewIndex = new Map<number, number>()
+  const nextTracks: Track[] = []
+  let videoCounter = 1
+  let audioCounter = 1
+  let stickerCounter = 1
+
+  tracks.forEach((track, index) => {
+    if (removed.has(index)) return
+    oldToNewIndex.set(index, nextTracks.length)
+
+    if (track.type === 'subtitle') {
+      nextTracks.push(track)
+    } else if (track.kind === 'audio') {
+      nextTracks.push({ ...track, name: `A${audioCounter++}` })
+    } else if (track.kind === 'sticker') {
+      nextTracks.push({ ...track, name: `S${stickerCounter++}` })
+    } else {
+      nextTracks.push({ ...track, name: `V${videoCounter++}` })
+    }
+  })
+
+  return {
+    tracks: nextTracks,
+    clips: clips.map(clip => ({
+      ...clip,
+      trackIndex: oldToNewIndex.get(clip.trackIndex) ?? clip.trackIndex,
+    })),
+    subtitles: subtitles.map(sub => ({
+      ...sub,
+      trackIndex: oldToNewIndex.get(sub.trackIndex) ?? sub.trackIndex,
+    })),
+  }
+}
+
+/**
+ * Where a clip is drawn inside the preview frame, in pixels of that frame.
+ *
+ * The preview fits the media into the frame (object-contain), then applies the
+ * clip's transform. Both the on-screen bounding box and the hit test for
+ * "which clip did the user just click" need that same rectangle, and computing
+ * it twice is how the two drift apart.
+ *
+ * Rotation is deliberately ignored: this is the axis-aligned box, which is
+ * what a click test wants and what the bounding box positions itself with
+ * before applying its own rotation.
+ */
+/**
+ * The size media takes inside the preview frame before any clip transform,
+ * i.e. what `object-contain` produces.
+ */
+export function fitMediaInFrame(
+  frame: { width: number; height: number },
+  asset: { width?: number; height?: number } | null | undefined,
+): { width: number; height: number } {
+  const frameWidth = frame.width || 1
+  const frameHeight = frame.height || 1
+  const targetRatio = (asset?.width || frameWidth) / (asset?.height || frameHeight)
+  const frameRatio = frameWidth / frameHeight
+
+  // The media touches the frame on whichever axis runs out first.
+  return frameRatio > targetRatio
+    ? { width: frameHeight * targetRatio, height: frameHeight }
+    : { width: frameWidth, height: frameWidth / targetRatio }
+}
+
+export function clipScreenBox(
+  frame: { width: number; height: number },
+  asset: { width?: number; height?: number } | null | undefined,
+  transform: { scale?: number; positionX?: number; positionY?: number } | null | undefined,
+): { left: number; top: number; width: number; height: number } {
+  const frameWidth = frame.width || 1
+  const frameHeight = frame.height || 1
+
+  const fitted = fitMediaInFrame(frame, asset)
+  const fittedWidth = fitted.width
+  const fittedHeight = fitted.height
+
+  const scale = Math.max(0, transform?.scale ?? 100) / 100
+  const width = fittedWidth * scale
+  const height = fittedHeight * scale
+
+  // positionX / positionY are percentages of the frame, measured from centre.
+  const centreX = frameWidth / 2 + (frameWidth * (transform?.positionX ?? 0)) / 100
+  const centreY = frameHeight / 2 + (frameHeight * (transform?.positionY ?? 0)) / 100
+
+  return {
+    left: centreX - width / 2,
+    top: centreY - height / 2,
+    width,
+    height,
+  }
+}

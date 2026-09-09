@@ -5,7 +5,6 @@ import {
   packMainVideoTrack,
   resolveOverlaps,
   pruneEmptyOverlayTracks,
-  ensureTrailingEmptyAudioTrack,
 } from '../src/video-editor-utils'
 import {
   createDefaultTimeline,
@@ -402,68 +401,6 @@ describe('S1-2: Pure editing logic safety net and trap prevention', () => {
       ]
       const result = pruneEmptyOverlayTracks(tracks, [], [])
       expect(result.tracks.some(t => t.id === 'v1')).toBe(true)
-    })
-  })
-
-  // ── 5b. ensureTrailingEmptyAudioTrack ─────────────────────────────────────
-  describe('ensureTrailingEmptyAudioTrack', () => {
-    it('appends an empty audio track when the last audio track contains clips', () => {
-      const tracks: Track[] = [
-        { id: 'v1', name: 'V1', kind: 'video', muted: false, locked: false },
-        { id: 'a1', name: 'A1', kind: 'audio', muted: false, locked: false },
-      ]
-      const clips: TimelineClip[] = [
-        createMockClip({ id: 'c-a1', trackIndex: 1, startTime: 0, duration: 10 }),
-      ]
-
-      const result = ensureTrailingEmptyAudioTrack(tracks, clips)
-      expect(result.tracks.length).toBe(3)
-      expect(result.tracks[2].kind).toBe('audio')
-      expect(result.tracks[2].name).toBe('A2')
-      expect(result.clips.some(c => c.trackIndex === 2)).toBe(false)
-    })
-
-    it('keeps existing tracks when the last audio track is already empty', () => {
-      const tracks: Track[] = [
-        { id: 'v1', name: 'V1', kind: 'video', muted: false, locked: false },
-        { id: 'a1', name: 'A1', kind: 'audio', muted: false, locked: false },
-      ]
-      const clips: TimelineClip[] = [
-        createMockClip({ id: 'c-v1', trackIndex: 0, startTime: 0, duration: 10 }),
-      ]
-
-      const result = ensureTrailingEmptyAudioTrack(tracks, clips)
-      expect(result.tracks.length).toBe(2)
-      expect(result.tracks).toBe(tracks)
-    })
-
-    it('creates A1 if no audio track exists at all', () => {
-      const tracks: Track[] = [
-        { id: 'v1', name: 'V1', kind: 'video', muted: false, locked: false },
-      ]
-      const result = ensureTrailingEmptyAudioTrack(tracks, [])
-      expect(result.tracks.length).toBe(2)
-      expect(result.tracks[1].kind).toBe('audio')
-      expect(result.tracks[1].name).toBe('A1')
-    })
-
-    it('prunes multiple redundant trailing empty audio tracks down to exactly one', () => {
-      const tracks: Track[] = [
-        { id: 'v1', name: 'V1', kind: 'video', muted: false, locked: false },
-        { id: 'a1', name: 'A1', kind: 'audio', muted: false, locked: false },
-        { id: 'a2', name: 'A2', kind: 'audio', muted: false, locked: false },
-        { id: 'a3', name: 'A3', kind: 'audio', muted: false, locked: false },
-      ]
-      // A1 has clips, A2 and A3 are both empty
-      const clips: TimelineClip[] = [
-        createMockClip({ id: 'c-a1', trackIndex: 1, startTime: 0, duration: 10 }),
-      ]
-
-      const result = ensureTrailingEmptyAudioTrack(tracks, clips)
-      // A3 is pruned, A2 remains as the single empty trailing track
-      expect(result.tracks.length).toBe(3)
-      expect(result.tracks[1].name).toBe('A1')
-      expect(result.tracks[2].name).toBe('A2')
     })
   })
 

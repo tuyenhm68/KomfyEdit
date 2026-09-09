@@ -33,6 +33,7 @@ import {
   selectTracks,
 } from './editor-selectors'
 import { TransformBoundingBox } from './preview/TransformBoundingBox'
+import { clipScreenBox } from '@core/video-editor-utils'
 import { MaskBoundingBox } from './preview/MaskBoundingBox'
 import { useEditorActions, useEditorStore } from './editor-store'
 import { useRenderCacheStore } from './render-cache-store'
@@ -692,6 +693,9 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   // when the user clicked on a text overlay (mousedown fires first on the overlay,
   // but click may bubble up to the wrapper if the mouse moved slightly).
   const clickedTextOverlayRef = React.useRef(false)
+  // Set while a transform handle is being used, so the click that ends the
+  // drag does not re-run the selection hit test against a stale rectangle.
+  const transformInteractionRef = React.useRef(false)
   const previewContainerRef = React.useRef<HTMLDivElement>(null)
   const videoFrameWrapperRef = React.useRef<HTMLDivElement>(null)
   const videoPoolContainerRef = React.useRef<HTMLDivElement>(null)
@@ -1165,13 +1169,33 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
       ? transitionLayerStyles(state.crossDissolveType, crossDissolveProgress)
       : null
 
-    const applyLayer = (el: HTMLElement | null, side: 'outgoing' | 'incoming') => {
+    /**
+     * Lays the transition's own movement over a layer that applyEffectStyle has
+     * already positioned.
+     *
+     * `baseTransform` is what the clip's own transform produced. It has to be
+     * passed back in and composed: this used to write `wanted.transform ?? ''`,
+     * and outside a transition `layerStyles` is null, so every repaint wiped the
+     * transform set one line earlier. Scale, position and rotation were dropped
+     * on the floor — the bounding box moved, the picture never did.
+     *
+     * The transition part comes first so it reads as the outer transform: CSS
+     * applies the list right to left, so the clip is placed, then the slide or
+     * wipe moves the placed result.
+     */
+    const applyLayer = (
+      el: HTMLElement | null,
+      side: 'outgoing' | 'incoming',
+      baseTransform?: React.CSSProperties['transform'],
+    ) => {
       if (!el) return
       const wanted = layerStyles?.[side] ?? {}
       // Clear what a previous frame set, or a finished wipe leaves the clip
       // clipped forever.
       el.style.clipPath = wanted.clipPath ?? ''
-      el.style.transform = wanted.transform ?? ''
+      el.style.transform = [wanted.transform, baseTransform]
+        .filter((part): part is string => Boolean(part))
+        .join(' ')
       if (wanted.filter !== undefined) el.style.filter = wanted.filter
     }
 
@@ -1191,7 +1215,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
           ? Number(layerStyles?.outgoing.opacity ?? 1) * ((crossDissolve.outgoing.opacity ?? 100) / 100)
           : baseStyle.opacity
         applyEffectStyle(poolContainer, baseStyle, typeof outgoingOpacity === 'number' ? outgoingOpacity : undefined)
-        applyLayer(poolContainer, 'outgoing')
+        applyLayer(poolContainer, 'outgoing', baseStyle.transform)
         if (hasChromaKey) {
           poolContainer.style.opacity = '0'
         }
@@ -1207,7 +1231,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
         ? Number(layerStyles?.outgoing.opacity ?? 1) * ((crossDissolve.outgoing.opacity ?? 100) / 100)
         : baseStyle.opacity
       applyEffectStyle(activeImageRef.current, baseStyle, typeof opacity === 'number' ? opacity : undefined)
-      applyLayer(activeImageRef.current, 'outgoing')
+      applyLayer(activeImageRef.current, 'outgoing', baseStyle.transform)
       if (hasChromaKey) {
         activeImageRef.current.style.opacity = '0'
       }
@@ -1223,7 +1247,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
           ? Number(layerStyles?.outgoing.opacity ?? 1) * ((crossDissolve.outgoing.opacity ?? 100) / 100)
           : baseStyle.opacity
         applyEffectStyle(lutCanvas, baseStyle, typeof opacity === 'number' ? opacity : undefined)
-        applyLayer(lutCanvas, 'outgoing')
+        applyLayer(lutCanvas, 'outgoing', baseStyle.transform)
         lutCanvasRef.current?.renderNow()
       } else {
         clearEffectStyle(lutCanvas)
@@ -1317,7 +1341,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
           video.load()
         }
         applyEffectStyle(video, inStyle)
-        applyLayer(video, 'incoming')
+        applyLayer(video, 'incoming', inStyle.transform)
         if (hasIncomingChroma) {
           video.style.opacity = '0'
         }
@@ -1353,7 +1377,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
 
       if (crossDissolve.incoming.asset?.type === 'image' && incomingDissolveImageRef.current) {
         applyEffectStyle(incomingDissolveImageRef.current, inStyle)
-        applyLayer(incomingDissolveImageRef.current, 'incoming')
+        applyLayer(incomingDissolveImageRef.current, 'incoming', inStyle.transform)
         if (hasIncomingChroma) {
           incomingDissolveImageRef.current.style.opacity = '0'
         }
@@ -1363,7 +1387,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
       if (incomingCanvas) {
         if (hasIncomingCanvas) {
           applyEffectStyle(incomingCanvas, inStyle)
-          applyLayer(incomingCanvas, 'incoming')
+          applyLayer(incomingCanvas, 'incoming', inStyle.transform)
           incomingLutCanvasRef.current?.renderNow()
         } else {
           clearEffectStyle(incomingCanvas)
@@ -1677,6 +1701,52 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const monitorClip = activeClip
   const compositingStack = frameScene.compositingStack
   const activeTextClips = frameScene.activeTextClips
+
+  /**
+   * Clicking the picture selects the clip under the pointer.
+   *
+   * Every visual clip is drawn with `pointer-events: none` so the compositing
+   * layers never swallow a drag, which meant a click always landed on the frame
+   * behind them and cleared the selection — selecting a sticker on the timeline
+   * and then clicking it on screen made its transform handles disappear.
+   *
+   * Topmost first: the compositing stack is drawn lowest track first, so walking
+   * it backwards picks what the user can actually see.
+   */
+  const selectVisualClipAtPoint = React.useCallback((event: React.MouseEvent) => {
+    // A drag on the bounding box ends with a click here. The clip stays
+    // selected: the user is working on it, and re-picking would hand focus to
+    // whatever happens to sit under the pointer.
+    if (transformInteractionRef.current) {
+      transformInteractionRef.current = false
+      return
+    }
+
+    const wrapper = videoFrameWrapperRef.current
+    if (!wrapper) {
+      clearClipSelection()
+      return
+    }
+
+    const rect = wrapper.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    const frame = { width: rect.width, height: rect.height }
+
+    const candidates = [...compositingStack, ...(activeClip ? [activeClip] : [])]
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const clip = candidates[i]
+      if (!clip || clip.type === 'audio') continue
+      const asset = clip.assetId ? assets.find(a => a.id === clip.assetId) : clip.asset
+      const box = clipScreenBox(frame, asset, clip.transform)
+      if (x >= box.left && x <= box.left + box.width && y >= box.top && y <= box.top + box.height) {
+        selectClip(clip.id)
+        return
+      }
+    }
+
+    clearClipSelection()
+  }, [activeClip, assets, clearClipSelection, compositingStack, selectClip])
   const activeSubtitles = frameScene.activeSubtitles
   const activeLetterbox = frameScene.activeLetterbox
   const activeAdjustmentEffects = frameScene.activeAdjustmentEffects
@@ -1858,6 +1928,13 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                       ? activeTimeline.background.color
                       : '#000000',
                 }}
+                onPointerDown={() => {
+                  // The bounding box stops propagation on its own handles, so a
+                  // press that reaches the frame is a press outside them. Clearing
+                  // here keeps the flag from surviving a drag that ended off-frame
+                  // and swallowing the next click.
+                  transformInteractionRef.current = false
+                }}
                 onClick={(e) => {
                   if (clickedTextOverlayRef.current) {
                     return
@@ -1867,7 +1944,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                     sampleColorAtEvent(e)
                     return
                   }
-                  clearClipSelection()
+                  selectVisualClipAtPoint(e)
                 }}
               >
               {(() => {
@@ -2326,6 +2403,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
               {/* Transform Bounding Box for active selected visual clip */}
               <TransformBoundingBox
                 selectedClip={selectedClip}
+                onInteractionStart={() => { transformInteractionRef.current = true }}
                 assets={assets}
                 videoFrameSize={videoFrameSize}
                 currentTime={currentTime}

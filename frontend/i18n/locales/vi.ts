@@ -345,6 +345,7 @@ export const vi: TranslationDictionary = {
       subtitle: 'Phụ đề',
       text: 'Văn bản (Text)',
       adjustment: 'Hiệu ứng (Adjustment)',
+      sticker: 'Sticker',
       image: 'Hình ảnh',
     },
     addVideoTrack: 'Thêm track video',

@@ -66,7 +66,20 @@ nsis:
   shortcutName: KomfyEdit
 
 mac:
-  hardenedRuntime: true
+  # Hardened Runtime is OFF while the app is unsigned, and turning it back on
+  # without a Developer ID will crash the app at launch on Apple Silicon.
+  #
+  # arm64 requires a signature, so electron-builder falls back to an ad-hoc one
+  # (macPackager.ts, fallBackToAdhoc). An ad-hoc signature carries no Team ID,
+  # and Hardened Runtime enforces library validation — code may only load
+  # libraries signed by the same team. The app loads @resvg/resvg-js's .node
+  # binding and spawns the bundled ffmpeg, both signed separately, so the
+  # kernel kills the process on launch.
+  #
+  # Hardened Runtime exists to satisfy notarization. Until there is a
+  # Developer ID to notarize with, it buys nothing and only breaks things.
+  # Set it back to true in the same change that adds `notarize: true`.
+  hardenedRuntime: false
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.plist
   # Both architectures must come out of ONE electron-builder run: macOS has a

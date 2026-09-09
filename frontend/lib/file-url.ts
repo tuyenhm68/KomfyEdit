@@ -1,23 +1,41 @@
 /**
- * Converts a filesystem path to a properly encoded file:// URL.
+ * A path that is not absolute does not name a file on disk — it names an asset
+ * shipped inside the app, like `stickers/fire.png`. Those live under `public/`,
+ * so the renderer reaches them relative to the page. Sending one through
+ * `file://` resolves it against the root of the drive instead, which loads
+ * nothing and shows nothing: that is why a sticker was missing from the
+ * preview even though its clip sat on the timeline.
+ */
+function isBundledAssetPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/')
+  if (normalized.startsWith('/')) return false
+  if (/^[a-zA-Z]:\//.test(normalized)) return false
+  return true
+}
+
+function encodePathSegments(path: string): string {
+  return path
+    .split('/')
+    .map(segment => encodeURIComponent(segment))
+    .join('/')
+}
+
+/**
+ * Converts a filesystem path to a properly encoded URL the renderer can load.
  *
  *   /Users/me/my file.mp4   → file:///Users/me/my%20file.mp4
- *   C:\Users\me\video#1.mp4 → file:///C:/Users/me/video%231.mp4
+ *   C:\Users\me\video#1.mp4 → file:///C%3A/Users/me/video%231.mp4
+ *   stickers/fire.png       → ./stickers/fire.png
  */
 export function pathToFileUrl(filePath: string): string {
-  // Normalize Windows separators
-  let normalized = filePath.replace(/\\/g, '/')
+  const normalized = filePath.replace(/\\/g, '/')
 
-  // Ensure leading slash (Windows drive letters like C:/ need one prepended)
-  if (!normalized.startsWith('/')) {
-    normalized = '/' + normalized
+  if (isBundledAssetPath(filePath)) {
+    return './' + encodePathSegments(normalized)
   }
 
-  // Encode each path segment individually so we don't encode the slashes
-  const encoded = normalized
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/')
+  // Ensure leading slash (Windows drive letters like C:/ need one prepended)
+  const withLeadingSlash = normalized.startsWith('/') ? normalized : '/' + normalized
 
-  return 'file://' + encoded
+  return 'file://' + encodePathSegments(withLeadingSlash)
 }

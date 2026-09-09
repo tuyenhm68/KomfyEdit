@@ -6,7 +6,7 @@ KomfyEdit is an open-source desktop video editor. It runs fully offline — no a
   <img src="images/video-editor.png" alt="Video Editor" width="70%">
 </p>
 
-## 📖 Documentation / Tài liệu hướng dẫn
+## 📖 Documentation
 
 - 🇺🇸 **[English Documentation](docs/en/README.md)**: [User Guide](docs/en/user-guide/01-getting-started.md) · [Developer Guide](docs/en/developer-guide/01-architecture-overview.md) · [Contributing](docs/en/developer-guide/05-contributing.md)
 - 🇻🇳 **[Tài liệu Tiếng Việt](docs/vi/README.md)**: [Hướng dẫn sử dụng](docs/vi/user-guide/01-getting-started.md) · [Hướng dẫn lập trình](docs/vi/developer-guide/01-architecture-overview.md) · [Đóng góp mã nguồn](docs/vi/developer-guide/05-contributing.md)
@@ -131,7 +131,12 @@ To add a new scenario to `scripts/eval-skills.ts`:
    ```
 3. Run `pnpm eval:skills` to verify all invariants pass and view the formatted evaluation table.
 
-## License
+## Acknowledgements & Attribution
 
-Apache-2.0. See [LICENSE.txt](LICENSE.txt) and [NOTICES.md](NOTICES.md).
+KomfyEdit's codebase was referenced and adapted from [LTX Desktop](https://github.com/Lightricks/LTX-Desktop) by Lightricks Ltd., originally licensed under the Apache License 2.0. We gratefully acknowledge and credit the original creators and contributors of LTX Desktop for their foundational work. Full attribution and notices are preserved in [NOTICES.md](NOTICES.md) and [LICENSE.txt](LICENSE.txt).
+
+## License & Terms of Use
+
+- **Free for Personal & Non-Commercial Use**: KomfyEdit is provided free of charge for personal, educational, and non-commercial purposes. Commercial use, resale, or distribution for profit is prohibited without explicit prior authorization.
+- **Open-Source Core**: Released under the [Apache-2.0 License](LICENSE.txt). All third-party libraries and assets retain their respective licenses (see [NOTICES.md](NOTICES.md)).
 

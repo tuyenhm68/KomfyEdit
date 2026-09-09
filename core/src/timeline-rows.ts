@@ -63,3 +63,33 @@ export function stableRowIndexAtY(
   if (y >= box.top - hysteresis && y < box.top + box.height + hysteresis) return previous
   return raw
 }
+
+/** Row heights the timeline draws with, one per kind of track. */
+export interface TimelineRowHeights {
+  video: number
+  audio: number
+  subtitle: number
+  sticker: number
+}
+
+/**
+ * How tall a track's row is.
+ *
+ * Sticker rows are deliberately shorter: they carry a small overlay, not
+ * footage, so giving them a full video row wastes vertical space in a timeline
+ * that often has several of them.
+ *
+ * One function rather than the ternary repeated at every call site — the
+ * heights are read in four places, and a new kind used to mean finding all
+ * four.
+ */
+export function trackRowHeight(
+  track: { kind?: string; type?: string } | undefined,
+  heights: TimelineRowHeights,
+): number {
+  if (!track) return heights.video
+  if (track.type === 'subtitle') return heights.subtitle
+  if (track.kind === 'audio') return heights.audio
+  if (track.kind === 'sticker') return heights.sticker
+  return heights.video
+}

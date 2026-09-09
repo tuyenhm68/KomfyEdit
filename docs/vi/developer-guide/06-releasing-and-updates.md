@@ -110,7 +110,24 @@ KomfyEdit hiện **chưa được ký số**. CI đặt `CSC_IDENTITY_AUTO_DISCO
 | **Linux** | Không ảnh hưởng | ✅ Chạy được (AppImage) |
 | **macOS** | Gatekeeper chặn; lần đầu phải chuột phải → Open | ❌ **Không chạy** — `electron-updater` từ chối cài bản không ký |
 
-Vì vậy người dùng macOS phải tải thủ công từng bản `.dmg` cho tới khi có chứng chỉ Developer ID. Muốn bật ký số thì cần chứng chỉ code signing cho Windows (hoặc Azure Trusted Signing), cùng tài khoản Apple Developer và bước notarize cho macOS, rồi khai secrets vào `release.yml`.
+Vì vậy người dùng macOS phải tải thủ công từng bản `.dmg` cho tới khi có chứng chỉ Developer ID.
+
+### Hardened Runtime phải tắt cho tới lúc đó
+
+`mac.hardenedRuntime` được đặt `false` một cách có chủ đích. Binary arm64 bắt buộc phải có chữ ký, nên khi không có chứng chỉ, electron-builder lui về chữ ký **ad-hoc** (`macPackager.ts`, `fallBackToAdhoc`). Chữ ký ad-hoc không mang Team ID, trong khi Hardened Runtime bắt buộc kiểm tra library validation — tiến trình chỉ được nạp thư viện ký bởi cùng một team. KomfyEdit nạp binding `.node` của `@resvg/resvg-js` và spawn ffmpeg đi kèm, cả hai được ký riêng, nên app bị giết ngay khi khởi động trên máy Apple Silicon. macOS chỉ hiện hộp thoại chung chung *"Check with the developer to make sure KomfyEdit works with this version of macOS"*, nhưng crash report bên dưới nói rõ nguyên nhân:
+
+```
+Termination Reason: Namespace DYLD, Code 1, Library missing
+Library not loaded: @rpath/Electron Framework.framework/Electron Framework
+Reason: ... code signature ... not valid for use in process:
+        mapping process and mapped file (non-platform) have different Team IDs
+```
+
+kèm `"codeSigningTeamID" : ""` — Team ID rỗng của chữ ký ad-hoc. Cụm "different Team IDs" chính là tiếng nói của library validation, mà library validation chỉ bật khi Hardened Runtime bật.
+
+Hardened Runtime sinh ra để phục vụ notarization; không có Developer ID thì nó không đem lại lợi ích gì. File `resources/entitlements.mac.plist` đã ghi sẵn ba entitlement mà bản ký sẽ cần (`allow-jit`, `allow-unsigned-executable-memory`, `disable-library-validation`), nên khi có chứng chỉ chỉ cần bật lại một dòng cùng lúc với `notarize: true`.
+
+Muốn bật ký số thì cần chứng chỉ code signing cho Windows (hoặc Azure Trusted Signing), cùng tài khoản Apple Developer và bước notarize cho macOS, rồi khai secrets vào `release.yml`.
 
 ---
 

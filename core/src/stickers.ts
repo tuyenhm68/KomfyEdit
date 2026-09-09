@@ -167,7 +167,18 @@ export const STICKER_CATEGORIES: { id: StickerCategory | 'all' | 'custom'; label
 ]
 
 export const DEFAULT_STICKER_DURATION = 3.0
+/** Fallback when the timeline size is unknown; see DEFAULT_STICKER_PIXELS. */
 export const DEFAULT_STICKER_SCALE = 40
+
+/**
+ * How big a freshly added sticker should be, in pixels of the project frame.
+ *
+ * `transform.scale` is a percentage of the frame rather than a pixel size, so
+ * a fixed percentage would come out tiny on a 4K timeline and huge on a 720p
+ * one. Callers turn this into a percentage against the frame's short edge — a
+ * square sticker is fitted to that edge before the scale is applied.
+ */
+export const DEFAULT_STICKER_PIXELS = 50
 
 export function getStickerDefinition(id: string): StickerDefinition | undefined {
   return STICKER_DEFINITIONS.find(s => s.id === id)

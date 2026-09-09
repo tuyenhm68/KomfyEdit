@@ -552,6 +552,12 @@ export function useTimelineDrag(params: UseTimelineDragParams) {
     const audioDisplayRows = orderedTracks
       .filter(e => e.track.kind === 'audio')
       .map(e => ({ displayRow: e.displayRow, realIndex: e.realIndex }))
+    // Sticker rows move within their own kind too. Without this list a sticker
+    // clip looked for itself among the video rows, never found itself, and was
+    // left where it was — the clip simply refused to move to another row.
+    const stickerDisplayRows = orderedTracks
+      .filter(e => e.track.kind === 'sticker')
+      .map(e => ({ displayRow: e.displayRow, realIndex: e.realIndex }))
     
     // Helper: resolve a clip's target track within its own kind
     const resolveTrackForClip = (origTrackIndex: number): number => {
@@ -559,7 +565,9 @@ export function useTimelineDrag(params: UseTimelineDragParams) {
       
       const origTrack = tracks[origTrackIndex]
       const clipKind = origTrack?.kind || 'video'
-      const kindRows = clipKind === 'audio' ? audioDisplayRows : videoDisplayRows
+      const kindRows = clipKind === 'audio'
+        ? audioDisplayRows
+        : clipKind === 'sticker' ? stickerDisplayRows : videoDisplayRows
       
       // Find this clip's position within its kind's ordered list
       const posInKind = kindRows.findIndex(r => r.realIndex === origTrackIndex)

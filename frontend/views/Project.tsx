@@ -41,7 +41,15 @@ export function Project() {
   useEffect(() => {
     if (!activeProjectId) return
     const assets = activeProjectAssetsRef.current
-    if (!assets || !hasVisualAssetMetadataForMigration(assets)) return
+    if (!assets || !hasVisualAssetMetadataForMigration(assets)) {
+      // Record the pass even when there was nothing to do. The progress screen
+      // shows whenever this project has not had its pass yet and some asset
+      // looks unmigrated, and this effect only re-runs when the project id
+      // changes — so a project that opened clean and later gained an asset
+      // without metadata would raise the screen with nothing left to lower it.
+      setUpgradePassProjectId(activeProjectId)
+      return
+    }
 
     let cancelled = false
 

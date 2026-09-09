@@ -52,14 +52,20 @@ function isMissingDimensions(item: { width?: number; height?: number }): boolean
 }
 
 /**
- * The main process only accepts absolute paths, so a bare filename can never be
- * migrated — no amount of retrying will resolve it. Treating such assets as
- * migratable keeps the "needs migration" flag stuck on forever, which used to
- * put the project screen into a loop. A path with no separator at all cannot be
- * absolute on any platform, which is a safe check to make from the renderer.
+ * The main process only accepts absolute paths, so anything relative can never
+ * be migrated — no amount of retrying will resolve it. Treating such an asset
+ * as migratable keeps the "needs migration" flag stuck on forever, which puts
+ * the project screen into a loop it cannot leave.
+ *
+ * Looking for a separator was not enough. A sticker is stored as
+ * `stickers/fire.png`: relative, but it has a separator, so adding one hung the
+ * app on the "preparing project assets" screen. Require a genuinely absolute
+ * path instead — a POSIX leading slash, a Windows drive letter, or a UNC share.
  */
 function isMigratablePath(assetPath: string): boolean {
-  return assetPath.includes('/') || assetPath.includes('\\')
+  return assetPath.startsWith('/')
+    || /^[a-zA-Z]:[\\/]/.test(assetPath)
+    || assetPath.startsWith('\\\\')
 }
 
 function collectVisualAssetMetadataMigrationJobs(assets: Asset[]): VisualAssetMetadataMigrationJob[] {

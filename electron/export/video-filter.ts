@@ -321,7 +321,11 @@ export function buildVideoFilterGraph(
       let chain: string
       if (clip.type === 'image') {
         inputs.push('-loop', '1', '-framerate', String(fps), '-t', clip.duration.toFixed(6), '-i', clip.path)
-        chain = `[${inputIdx}:v]`
+        // `null` is a no-op that exists only to anchor the chain. Every filter
+        // below is appended with a leading comma, so a bare `[N:v]` would produce
+        // `[N:v],scale=...` — and ffmpeg reads the empty piece before that comma
+        // as a filter name, failing the whole export with `No such filter: ''`.
+        chain = `[${inputIdx}:v]null`
       } else {
         const { seekArg, adjustedTrimStart } = computePreInputSeek(clip.trimStart)
         const hasSpeedKeyframes = hasKeyframesForProperty(clip as any, 'speed')

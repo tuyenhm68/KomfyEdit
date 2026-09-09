@@ -1,7 +1,7 @@
 import type { Project, Timeline, TimelineClip, Track } from './project-model'
 import type { EditorModel } from './editor-state'
 import { DEFAULT_TRACKS } from './project-model'
-import { migrateClip, migrateTracks, mainVideoTrackIndex, packMainVideoTrack, ensureTrailingEmptyAudioTrack } from './video-editor-utils'
+import { migrateClip, migrateTracks, mainVideoTrackIndex, packMainVideoTrack, pruneEmptyTracks } from './video-editor-utils'
 import { pruneOrphanTransitions } from './timeline-transitions'
 
 /**
@@ -45,7 +45,10 @@ function normalizeTimeline(timeline: Timeline): Timeline {
   // carrying a dead record for the rest of its life. Pruning after the pack,
   // because the pack is what puts the V1 overlaps back.
   const packedClips = packMainVideoTrack(tracks, reattachOrphanClips(tracks, timeline.clips.map(migrateClip)), timeline.transitions ?? [])
-  const withTrailing = ensureTrailingEmptyAudioTrack(tracks, packedClips, timeline.subtitles || [])
+  // Opening a project is where a trail of empty rows gets cleaned up: an
+  // overlay that was cleared, a spare audio row, a sticker row whose sticker
+  // is gone. Only the first video track and the subtitle rows are kept.
+  const withTrailing = pruneEmptyTracks(tracks, packedClips, timeline.subtitles || [])
 
   return pruneOrphanTransitions({
     ...timeline,

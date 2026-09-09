@@ -110,7 +110,24 @@ KomfyEdit is currently **not code-signed**. CI sets `CSC_IDENTITY_AUTO_DISCOVERY
 | **Linux** | Unaffected | ✅ Works (AppImage) |
 | **macOS** | Gatekeeper blocks; users must right-click → Open on first launch | ❌ **Does not work** — `electron-updater` refuses to install unsigned builds |
 
-macOS users therefore have to download each new `.dmg` manually until a Developer ID certificate is in place. Enabling signing means adding a Windows code-signing certificate (or Azure Trusted Signing) and an Apple Developer ID plus notarization, then wiring the secrets into `release.yml`.
+macOS users therefore have to download each new `.dmg` manually until a Developer ID certificate is in place.
+
+### Hardened Runtime must stay off until then
+
+`mac.hardenedRuntime` is set to `false` on purpose. arm64 binaries must carry a signature, so with no certificate electron-builder falls back to an **ad-hoc** signature (`macPackager.ts`, `fallBackToAdhoc`). An ad-hoc signature has no Team ID, and Hardened Runtime enforces library validation — a process may only load libraries signed by the same team. KomfyEdit loads `@resvg/resvg-js`'s native `.node` binding and spawns the bundled ffmpeg, both signed separately, so the app is killed at launch on Apple Silicon. macOS shows the generic *"Check with the developer to make sure KomfyEdit works with this version of macOS"* dialog; the crash report underneath names the real cause:
+
+```
+Termination Reason: Namespace DYLD, Code 1, Library missing
+Library not loaded: @rpath/Electron Framework.framework/Electron Framework
+Reason: ... code signature ... not valid for use in process:
+        mapping process and mapped file (non-platform) have different Team IDs
+```
+
+with `"codeSigningTeamID" : ""` — the empty Team ID of an ad-hoc signature. That "different Team IDs" wording is library validation talking, and library validation is only switched on by Hardened Runtime.
+
+Hardened Runtime exists to satisfy notarization; without a Developer ID it buys nothing. `resources/entitlements.mac.plist` already carries the three entitlements that build will need (`allow-jit`, `allow-unsigned-executable-memory`, `disable-library-validation`), so turning it back on is a one-line change made together with `notarize: true`.
+
+Enabling signing means adding a Windows code-signing certificate (or Azure Trusted Signing) and an Apple Developer ID plus notarization, then wiring the secrets into `release.yml`.
 
 ---
 

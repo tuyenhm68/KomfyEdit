@@ -47,8 +47,9 @@ import {
   resolveStickerRelativePath,
   DEFAULT_STICKER_DURATION,
   DEFAULT_STICKER_SCALE,
+  DEFAULT_STICKER_PIXELS,
 } from './stickers'
-import { resolveOverlaps, packMainVideoTrack, type EditorLayout, type ToolType } from './video-editor-utils'
+import { resolveOverlaps, packMainVideoTrack, mainVideoTrackIndex, pruneEmptyTracks, type EditorLayout, type ToolType } from './video-editor-utils'
 import {
   applyUndoSnapshot,
   createInitialEditorState,
@@ -65,6 +66,7 @@ import {
   selectActiveTimelineOutPoint,
   selectActiveTimelineId,
   selectAssetById,
+  selectAssets,
   selectCanUseClipboard,
   selectClipById,
   selectClips,
@@ -73,12 +75,25 @@ import {
   selectTracks,
 } from './editor-selectors'
 import { getEditorModel, updatedProject } from './editor-project-bridging'
+import { getEffectiveTimelineDimensions } from './video-resolution'
+import { clampClipSpeed } from './clip-speed'
 
 
 export interface InsertAssetsToTimelineParams {
   assets: Asset[]
   trackIndex?: number
   startTime?: number
+  /**
+   * Where to drop the assets when no `startTime` is given.
+   *
+   * 'end' (the default) appends after whatever is already on the track, and
+   * is what the MCP `insert_clip` operation relies on. 'start' puts them in
+   * front of the existing edit and is what the Add button in the asset panel
+   * asks for; it only applies to the magnetic main video track, because on
+   * any other track resolveOverlaps would trim what it lands on rather than
+   * push it aside.
+   */
+  position?: 'start' | 'end'
 }
 
 export interface AddTextClipParams {
@@ -271,7 +286,13 @@ function buildDroppedVisualClipInsertion(
   const isImageAsset = asset.type === 'image'
 
   const createVisualClip = (isVideoAsset || isImageAsset || isAdjustment) && trackPatched
-  const needsLinkedAudioClip = isVideoAsset && !isAdjustment
+  // A video keeps its sound inside the video clip, the way CapCut does.
+  // The preview and the exporter both already read audio straight off a video
+  // clip that has no linked audio clip (isAudioSourceClip in
+  // usePlaybackAudioSync, and the hasLinkedAudioClip guard in
+  // electron/export/audio-mix.ts), so nothing downstream changes. Splitting
+  // stays available on demand through Extract audio / MCP `detach_audio`.
+  const needsLinkedAudioClip = false
   let audioTrackIndex = -1
 
   if (needsLinkedAudioClip) {
@@ -540,7 +561,8 @@ function buildSourceRequestClips(state: EditorState, params: SourceEditParams): 
     })
     targetTrackIndices.push(audioTrackIndex)
   } else {
-    const needsAudio = asset.type === 'video' && audioTrackIndex >= 0
+    // Same rule as the drag-and-drop path above: no automatic audio split.
+    const needsAudio = false
     newClips.push({
       ...baseClip,
       id: videoClipId,
@@ -572,10 +594,26 @@ export function replaceActiveTimeline(state: EditorState, updater: (timeline: Ti
     const validation = validateTimeline(updated, active)
     if (!validation.valid) {
       setLastTimelineValidationError(validation)
-      return state
+      // Refusing an edit is fine; refusing it in silence is not. The reason
+      // rides back in session state so the editor can say what happened,
+      // instead of the control appearing to be broken.
+      const first = validation.errors[0]
+      return updateSession(state, session => ({
+        ...session,
+        ui: {
+          ...session.ui,
+          lastRejectedEdit: first
+            ? { rule: first.rule, message: first.message }
+            : { rule: 'UNKNOWN', message: 'The timeline refused this change.' },
+        },
+      }))
     }
   }
-  return updateEditorModel(state, editorModel => withActiveTimeline(editorModel, () => updated))
+  const committed = updateEditorModel(state, editorModel => withActiveTimeline(editorModel, () => updated))
+  // A successful edit clears any complaint left over from the last one.
+  return state.session.ui.lastRejectedEdit === null
+    ? committed
+    : updateSession(committed, session => ({ ...session, ui: { ...session.ui, lastRejectedEdit: null } }))
 }
 
 function mapClips(state: EditorState, mapper: (clip: TimelineClip) => TimelineClip): EditorState {
@@ -955,7 +993,22 @@ export function insertAssetsToTimeline(state: EditorState, params: InsertAssetsT
   const activeTimeline = selectActiveTimeline(state)
   if (!activeTimeline) return state
 
-  let cursor = params.startTime ?? activeTrackStartTime(state, trackIndex)
+  // position: 'start' puts the assets in front of what is already on the main
+  // video track. V1 is the magnetic track: resolveOverlaps
+  // pushes the clips it displaces to the right instead of trimming them, and
+  // packMainVideoTrack closes the gap afterwards, so the existing edit survives
+  // intact and simply starts later.
+  //
+  // Only for V1, and only when no explicit time was given. On any other track
+  // resolveOverlaps trims and splits whatever it lands on, so prepending there
+  // would destroy clips; drag-and-drop always passes its own startTime anyway.
+  const mainTrackIndex = mainVideoTrackIndex(activeTimeline.tracks)
+  const prependToMainTrack = params.position === 'start'
+    && params.startTime === undefined
+    && mainTrackIndex >= 0
+    && trackIndex === mainTrackIndex
+  const startCursor = params.startTime ?? (prependToMainTrack ? 0 : activeTrackStartTime(state, trackIndex))
+  let cursor = startCursor
   let nextTracks = activeTimeline.tracks
   const insertedClips: TimelineClip[] = []
 
@@ -971,12 +1024,37 @@ export function insertAssetsToTimeline(state: EditorState, params: InsertAssetsT
   }
 
   const insertedIds = new Set(insertedClips.map(clip => clip.id))
+  const insertedSpan = cursor - startCursor
+
+  // Make room first rather than letting resolveOverlaps do it. That function
+  // DELETES any clip the inserted range fully covers (the `cStart >= movedStart
+  // && cEnd <= movedEnd` branch), which it checks before the magnetic-track
+  // guard — so prepending a 12s asset in front of a 10s clip erased the 10s
+  // clip and looked like the new asset had replaced it. Shifting by hand is
+  // also exact: every displaced clip moves by the same amount, so relative
+  // timing and any transitions between them survive.
+  const shiftForPrepend = (clips: TimelineClip[]): TimelineClip[] => {
+    if (!prependToMainTrack || insertedSpan <= 0) return clips
+    const displaced = new Set(
+      clips.filter(clip => clip.trackIndex === mainTrackIndex).map(clip => clip.id))
+    if (displaced.size === 0) return clips
+    // Linked clips (a legacy detached audio track) ride along, or they would
+    // drift out of sync with the picture they belong to.
+    for (const clip of clips) {
+      if (!displaced.has(clip.id)) continue
+      for (const linkedId of clip.linkedClipIds ?? []) displaced.add(linkedId)
+    }
+    return clips.map(clip => displaced.has(clip.id)
+      ? { ...clip, startTime: clip.startTime + insertedSpan }
+      : clip)
+  }
+
   return replaceActiveTimeline(state, timeline => ({
     ...timeline,
     tracks: nextTracks,
     clips: packMainVideoTrack(
       nextTracks,
-      resolveOverlaps([...timeline.clips, ...insertedClips], insertedIds),
+      resolveOverlaps([...shiftForPrepend(timeline.clips), ...insertedClips], insertedIds),
       timeline.transitions,
     ),
   }))
@@ -1172,9 +1250,19 @@ export function deleteClips(state: EditorState, clipIds: string[]): EditorState 
         const remaining = clip.linkedClipIds.filter(id => !deleteSet.has(id))
         return { ...clip, linkedClipIds: remaining.length > 0 ? remaining : undefined }
       })
+    // Deleting the last clip on a row leaves the row behind, so tidy up in the
+    // same step. The user sees the row go with its contents rather than having
+    // to remove it separately.
+    const pruned = pruneEmptyTracks(
+      timeline.tracks,
+      packMainVideoTrack(timeline.tracks, remainingClips, timeline.transitions),
+      timeline.subtitles || [],
+    )
     return {
       ...timeline,
-      clips: packMainVideoTrack(timeline.tracks, remainingClips, timeline.transitions),
+      tracks: pruned.tracks,
+      clips: pruned.clips,
+      subtitles: pruned.subtitles,
     }
   })
   next = updateSession(next, session => ({
@@ -1341,16 +1429,100 @@ export function updateClip(state: EditorState, clipId: string, patch: Partial<Ti
   return mapClips(state, clip => (clip.id === clipId ? { ...clip, ...patch } : clip))
 }
 
+/**
+ * Re-times one clip and packs the magnetic track around it.
+ *
+ * Every edit that changes when a clip starts or how long it runs has to leave
+ * V1 seamless, or `replaceActiveTimeline` throws the whole edit away. Patching
+ * the clip on its own — which is all `updateClip` does — was enough to make the
+ * Speed, Duration and Start Time controls do nothing at all whenever another
+ * clip followed on the main track.
+ */
+function retimeClip(state: EditorState, clipId: string, patch: Partial<TimelineClip>): EditorState {
+  return replaceActiveTimeline(state, timeline => ({
+    ...timeline,
+    clips: packMainVideoTrack(
+      timeline.tracks,
+      timeline.clips.map(clip => (clip.id === clipId ? { ...clip, ...patch } : clip)),
+      timeline.transitions,
+    ),
+  }))
+}
+
+/**
+ * Note that on the magnetic track the pack decides the start time, so this can
+ * only move a clip that sits on an overlay or audio row.
+ */
 export function setClipStartTime(state: EditorState, clipId: string, startTime: number): EditorState {
-  return updateClip(state, clipId, { startTime: Math.max(0, startTime) })
+  return retimeClip(state, clipId, { startTime: Math.max(0, startTime) })
 }
 
 export function setClipDuration(state: EditorState, clipId: string, duration: number): EditorState {
-  return updateClip(state, clipId, { duration: Math.max(0.1, duration) })
+  return retimeClip(state, clipId, { duration: Math.max(0.1, duration) })
 }
 
-export function setClipSpeed(state: EditorState, clipId: string, speed: number): EditorState {
-  return updateClip(state, clipId, { speed: Math.max(0.01, speed) })
+/**
+ * Changes a clip's speed, and re-times the magnetic track around it.
+ *
+ * Speed and duration move together: playing the same media twice as fast takes
+ * half the time. On V1 that shortens or lengthens the clip, which leaves every
+ * clip after it starting at the wrong moment — and the timeline validator
+ * rejects a V1 with a gap or an overlap (V1_NOT_SEAMLESS). `replaceActiveTimeline`
+ * drops a rejected edit and returns the previous state without a word, so the
+ * speed slider simply did nothing whenever another clip followed on V1.
+ *
+ * Packing the track in the same step is what makes the edit legal: the
+ * following clips slide to meet the new duration.
+ */
+export function setClipSpeed(
+  state: EditorState,
+  clipId: string,
+  speed: number,
+  duration?: number,
+): EditorState {
+  return retimeClip(state, clipId, {
+    speed: clampClipSpeed(speed),
+    ...(duration !== undefined ? { duration: Math.max(0.1, duration) } : {}),
+  })
+}
+
+/**
+ * The same change across a selection, in one edit.
+ *
+ * Applying it clip by clip would leave a row of undo steps for what the user
+ * did once, and each intermediate state would have to be seamless on its own —
+ * which it is not, since the clips are re-timed one at a time.
+ *
+ * `durationFor` receives each clip and returns the length it should take at the
+ * new speed; the caller owns that sum because it is the side that knows how
+ * much media is left to play.
+ */
+export function setClipsSpeed(
+  state: EditorState,
+  clipIds: Iterable<string>,
+  speed: number,
+  durationFor?: (clip: TimelineClip) => number,
+): EditorState {
+  const targets = new Set(clipIds)
+  if (targets.size === 0) return state
+  const safeSpeed = clampClipSpeed(speed)
+
+  return replaceActiveTimeline(state, timeline => ({
+    ...timeline,
+    clips: packMainVideoTrack(
+      timeline.tracks,
+      timeline.clips.map(clip => (
+        targets.has(clip.id)
+          ? {
+            ...clip,
+            speed: safeSpeed,
+            ...(durationFor ? { duration: Math.max(0.1, durationFor(clip)) } : {}),
+          }
+          : clip
+      )),
+      timeline.transitions,
+    ),
+  }))
 }
 
 function resolveClipAudioTargetId(state: EditorState, clipId: string): string | null {
@@ -1493,12 +1665,13 @@ export function removeCrossDissolve(state: EditorState, leftClipId: string, righ
   })
 }
 
-export function addTrack(state: EditorState, kind: 'video' | 'audio'): EditorState {
+export function addTrack(state: EditorState, kind: 'video' | 'audio' | 'sticker'): EditorState {
   const tracks = selectTracks(state)
   const sameKindCount = tracks.filter(track => track.kind === kind && track.type !== 'subtitle').length
+  const prefix = kind === 'audio' ? 'A' : kind === 'sticker' ? 'S' : 'V'
   const newTrack: Track = {
     id: makeId('track'),
-    name: kind === 'audio' ? `A${sameKindCount + 1}` : `V${sameKindCount + 1}`,
+    name: `${prefix}${sameKindCount + 1}`,
     muted: false,
     locked: false,
     kind,
@@ -2897,33 +3070,90 @@ export interface AddStickerClipParams {
   opacity?: number
 }
 
+/**
+ * A playhead this close to the start counts as being at the start. The
+ * transport reports a float, so it is rarely exactly zero.
+ */
+const STICKER_TIMELINE_START_EPSILON = 1e-3
+
+/**
+ * The scale a new sticker starts at, so it lands about DEFAULT_STICKER_PIXELS
+ * across whatever the project's frame size is.
+ *
+ * A square sticker is fitted to the frame's short edge before `transform.scale`
+ * is applied — that holds in the preview (object-contain then a CSS scale) and
+ * in the export (force_original_aspect_ratio=decrease then the same factor) —
+ * so the short edge is what the percentage has to be measured against.
+ */
+function defaultStickerScale(state: EditorState): number {
+  const timeline = selectActiveTimeline(state)
+  const dimensions = getEffectiveTimelineDimensions(timeline, selectAssets(state))
+  const shortEdge = Math.min(dimensions.width, dimensions.height)
+  if (!shortEdge || !Number.isFinite(shortEdge)) return DEFAULT_STICKER_SCALE
+  // Clamped so an unusual frame size cannot produce a sticker too small to grab
+  // by its handles, or one that fills the screen.
+  return Math.max(2, Math.min(50, (DEFAULT_STICKER_PIXELS / shortEdge) * 100))
+}
+
 export function addStickerClip(state: EditorState, params: AddStickerClipParams): EditorState {
   let next = state
+  const startTime = params.startTime ?? selectCurrentTime(next)
+  const duration = params.duration ?? DEFAULT_STICKER_DURATION
   let trackIdx = params.trackIndex
+
   if (trackIdx === undefined) {
-    const tracks = selectTracks(next)
-    const existingOverlay = tracks.findIndex((t, idx) => idx > 0 && t.kind === 'video' && !t.locked)
-    if (existingOverlay >= 0) {
-      trackIdx = existingOverlay
+    // Stickers live on their own rows and nowhere else. Sharing an overlay row
+    // with footage or text meant a sticker could land on top of a title, which
+    // is why 'sticker' is its own track kind.
+    //
+    // Playhead at the start   -> a fresh sticker row every time. Stickers added
+    //                            there all begin at 0, so sharing a row would
+    //                            just pile them on top of each other.
+    // Playhead anywhere else  -> the first sticker row, at that position.
+    //
+    // A row already busy at that moment is skipped rather than written over, and
+    // if every one of them is busy a new row is added. Sticker rows are not
+    // magnetic, so two clips at the same spot would silently overlap.
+    const stickerRows = selectTracks(next)
+      .map((track, idx) => ({ track, idx }))
+      .filter(entry => entry.track.kind === 'sticker' && !entry.track.locked)
+    const clips = selectClips(next)
+    const isFreeAt = (idx: number) => !clips.some(clip =>
+      clip.trackIndex === idx
+      && clip.startTime < startTime + duration
+      && clip.startTime + clip.duration > startTime)
+
+    const target = startTime < STICKER_TIMELINE_START_EPSILON
+      ? undefined
+      : stickerRows.find(entry => isFreeAt(entry.idx))
+
+    if (target) {
+      trackIdx = target.idx
     } else {
-      next = addTrack(next, 'video')
+      next = addTrack(next, 'sticker')
       trackIdx = selectTracks(next).length - 1
     }
   }
 
-  const startTime = params.startTime ?? selectCurrentTime(next)
-  const duration = params.duration ?? DEFAULT_STICKER_DURATION
   const def = getStickerDefinition(params.stickerId)
   const imagePath = params.imagePath ?? (def ? `stickers/${def.filename}` : resolveStickerRelativePath(params.stickerId))
   const stickerName = def ? def.name : (params.stickerId || 'Sticker')
 
   const assetId = makeId('asset-sticker')
+  const stickerWidth = def?.width || 512
+  const stickerHeight = def?.height || 512
   const stickerAsset: Asset = {
     id: assetId,
     type: 'image',
     path: imagePath,
     prompt: `Sticker: ${stickerName}`,
-    resolution: def ? `${def.width || 512}x${def.height || 512}` : '512x512',
+    resolution: `${stickerWidth}x${stickerHeight}`,
+    // Carry the dimensions as real fields, not just inside the resolution
+    // string. An image asset missing width/height counts as needing the asset
+    // metadata upgrade pass, and a sticker path is relative so that pass can
+    // never complete for it.
+    width: stickerWidth,
+    height: stickerHeight,
     duration,
     createdAt: Date.now(),
   }
@@ -2956,7 +3186,7 @@ export function addStickerClip(state: EditorState, params: AddStickerClipParams)
     colorCorrection: { ...DEFAULT_COLOR_CORRECTION },
     transform: {
       ...DEFAULT_CLIP_TRANSFORM,
-      scale: params.scale ?? DEFAULT_STICKER_SCALE,
+      scale: params.scale ?? defaultStickerScale(next),
       ...(params.positionX !== undefined ? { positionX: params.positionX } : {}),
       ...(params.positionY !== undefined ? { positionY: params.positionY } : {}),
       ...(params.rotation !== undefined ? { rotation: params.rotation } : {}),
@@ -3816,4 +4046,11 @@ export function insertBrollClip(state: EditorState, params: InsertBrollParams): 
   }))
 }
 
-
+/** Dismisses the notice about the last refused edit. */
+export function clearRejectedEdit(state: EditorState): EditorState {
+  if (state.session.ui.lastRejectedEdit === null) return state
+  return updateSession(state, session => ({
+    ...session,
+    ui: { ...session.ui, lastRejectedEdit: null },
+  }))
+}

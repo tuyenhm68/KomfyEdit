@@ -14,6 +14,7 @@ import {
 import { getTimelineDuration } from './timeline'
 import { buildVideoFilterGraph } from './video-filter'
 import { mixAudioToPcm } from './audio-mix'
+import { resolveStickerPath } from './sticker-utils'
 import {
   estimateExportIntermediateSize,
   checkDiskSpaceForExport,
@@ -275,7 +276,17 @@ class RenderQueueManager {
     const ffmpegPath = findFfmpegPath()
     if (!ffmpegPath) return { success: false, error: 'FFmpeg not found' }
 
-    const { clips, outputPath, codec, width, height, fps, quality, letterbox, subtitles, transitions } = params
+    const { clips: rawClips, outputPath, codec, width, height, fps, quality, letterbox, subtitles, transitions } = params
+
+    // A sticker is stored as `stickers/fire.png` — relative, because the file
+    // ships inside the app rather than living in the user's project. The
+    // renderer has no filesystem to resolve that against, so it arrives here
+    // unresolved and ffmpeg would look for it next to the working directory.
+    // Only the main process knows where the packaged resources are.
+    const clips = rawClips.map(clip =>
+      clip.path && !path.isAbsolute(clip.path)
+        ? { ...clip, path: resolveStickerPath(clip.path) }
+        : clip)
 
     try {
       validatePath(outputPath, getAllowedRoots())

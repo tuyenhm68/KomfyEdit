@@ -36,6 +36,7 @@ export interface ClipContextMenuProps {
   splitClipAtPlayhead: (clipId: string, atTime?: number, batchClipIds?: string[]) => void
   removeClip: (clipId: string) => void
   updateClip: (clipId: string, updates: Partial<TimelineClip>) => void
+  setClipSpeed: (clipId: string, speed: number, duration?: number) => void
   getLiveAsset: (clip: TimelineClip) => Asset | null | undefined
   getMaxClipDuration: (clip: TimelineClip) => number
   onRevealAsset: (assetId: string) => void
@@ -96,6 +97,7 @@ export function ClipContextMenu({
   splitClipAtPlayhead,
   removeClip,
   updateClip,
+  setClipSpeed,
   getLiveAsset,
   getMaxClipDuration,
   onRevealAsset,
@@ -197,6 +199,7 @@ export function ClipContextMenu({
           splitClipAtPlayhead={splitClipAtPlayhead}
           removeClip={removeClip}
           updateClip={updateClip}
+          setClipSpeed={setClipSpeed}
           getLiveAsset={getLiveAsset}
           getMaxClipDuration={getMaxClipDuration}
           onRevealAsset={onRevealAsset}
@@ -223,7 +226,7 @@ function SingleClipMenu({
   contextClip, clips, hasClipboard,
   currentProjectId, updateAsset,
   handleCopy, handleCut, handlePaste, setClips,
-  duplicateClip, splitClipAtPlayhead, removeClip, updateClip,
+  duplicateClip, splitClipAtPlayhead, removeClip, updateClip, setClipSpeed,
   getLiveAsset, getMaxClipDuration,
   onRevealAsset,
   currentTime,
@@ -240,6 +243,7 @@ function SingleClipMenu({
   splitClipAtPlayhead: (clipId: string, atTime?: number, batchClipIds?: string[]) => void
   removeClip: (clipId: string) => void
   updateClip: (clipId: string, updates: Partial<TimelineClip>) => void
+  setClipSpeed: (clipId: string, speed: number, duration?: number) => void
   getLiveAsset: (clip: TimelineClip) => Asset | null | undefined
   getMaxClipDuration: (clip: TimelineClip) => number
   onRevealAsset: (assetId: string) => void
@@ -329,7 +333,9 @@ function SingleClipMenu({
               const maxDur = getMaxClipDuration({ ...contextClip, speed })
               newDuration = Math.min(newDuration, maxDur)
               newDuration = Math.max(0.5, newDuration)
-              updateClip(contextClip.id, { speed, duration: newDuration })
+              // setClipSpeed, not updateClip: the shorter or longer clip has to
+              // be packed back into V1 or the whole edit is refused.
+              setClipSpeed(contextClip.id, speed, newDuration)
               close()
             }}
             className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
@@ -623,15 +629,13 @@ function MultiClipMenu({
           <button
             key={speed}
             onClick={() => {
-              setClips(prev => prev.map(c => {
-                if (!selectedClipIds.has(c.id)) return c
-                const oldSpeed = c.speed
-                let newDuration = c.duration * (oldSpeed / speed)
-                const maxDur = getMaxClipDuration({ ...c, speed })
-                newDuration = Math.min(newDuration, maxDur)
-                newDuration = Math.max(0.5, newDuration)
-                return { ...c, speed, duration: newDuration }
-              }))
+              // One edit for the whole selection: applying it clip by clip
+              // would leave a row of undo steps, and each intermediate
+              // timeline would be rejected for not being seamless yet.
+              actions.setClipsSpeed(selectedClipIds, speed, (c: TimelineClip) => {
+                const wanted = c.duration * (c.speed / speed)
+                return Math.max(0.5, Math.min(wanted, getMaxClipDuration({ ...c, speed })))
+              })
               close()
             }}
             className="px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors bg-zinc-700 text-zinc-400 hover:bg-zinc-600 hover:text-white"

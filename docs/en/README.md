@@ -31,4 +31,12 @@ Architecture, development practices, and contribution standards for engineers.
 
 ---
 
+## ⚖️ Acknowledgements & Terms of Use
+
+- **Acknowledgements**: KomfyEdit's codebase references and adapts foundational architecture from [LTX Desktop](https://github.com/Lightricks/LTX-Desktop) by Lightricks Ltd. (licensed under Apache-2.0). Upstream notices and attribution are preserved in [NOTICES.md](../../NOTICES.md) and [LICENSE.txt](../../LICENSE.txt).
+- **Free for Non-Commercial Use**: KomfyEdit is provided completely free of charge for personal, research, and non-commercial workflows. Commercial distribution or monetization is prohibited without prior written permission.
+- **License**: Core software is licensed under the [Apache-2.0 License](../../LICENSE.txt).
+
+---
+
 [← Back to Central Documentation Portal](../README.md) · [Xem phiên bản Tiếng Việt →](../vi/README.md)

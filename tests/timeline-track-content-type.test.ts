@@ -80,4 +80,27 @@ describe('getTrackContentType', () => {
     const track = createBaseTrack({ name: 'V1' })
     expect(getTrackContentType(track, 0, [])).toBe('video')
   })
+
+  describe('sticker rows', () => {
+    it('reports sticker from the track kind, not from what is on it', () => {
+      // A sticker clip is an image clip. Reading the contents would give a
+      // sticker row the same picture icon a photo row gets, which is exactly
+      // the confusion the separate track kind exists to remove.
+      const track = createBaseTrack({ kind: 'sticker', name: 'S1' })
+      const clips = [createBaseClip({ type: 'image', trackIndex: 0, stickerId: 'fire' })]
+
+      expect(getTrackContentType(track, 0, clips)).toBe('sticker')
+    })
+
+    it('reports sticker even for an empty sticker row', () => {
+      const track = createBaseTrack({ kind: 'sticker', name: 'S1' })
+      expect(getTrackContentType(track, 0, [])).toBe('sticker')
+    })
+
+    it('still calls a plain image row an image row', () => {
+      const track = createBaseTrack({ kind: 'video', name: 'V2' })
+      const clips = [createBaseClip({ type: 'image', trackIndex: 0 })]
+      expect(getTrackContentType(track, 0, clips)).toBe('image')
+    })
+  })
 })

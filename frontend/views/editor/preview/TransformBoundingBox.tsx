@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { fitMediaInFrame } from '@core/video-editor-utils'
 import { RotateCw, Crop, Check } from 'lucide-react'
 import type { Asset, TimelineClip, ClipTransform } from '../../../types/project-model'
 import { DEFAULT_CLIP_TRANSFORM } from '../../../types/project-model'
@@ -11,6 +12,16 @@ export interface TransformBoundingBoxProps {
   cropMode: boolean
   onToggleCropMode: () => void
   onUpdateTransform: (patch: Partial<ClipTransform>, options?: { recordKeyframeAt?: number }) => void
+  /**
+   * Raised as soon as a handle is grabbed, before anything moves.
+   *
+   * The preview clears or re-picks the selection when the frame is clicked,
+   * and the click that ends a drag lands there too. Without this the editor
+   * hit-tested the clip's OLD rectangle, missed it, and selected whatever
+   * sat underneath — dropping a sticker handed focus back to the video on
+   * track 1 every single time.
+   */
+  onInteractionStart?: () => void
 }
 
 type DragMode =
@@ -41,6 +52,7 @@ export const TransformBoundingBox: React.FC<TransformBoundingBoxProps> = ({
   cropMode,
   onToggleCropMode,
   onUpdateTransform,
+  onInteractionStart,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -73,35 +85,19 @@ export const TransformBoundingBox: React.FC<TransformBoundingBoxProps> = ({
     setSnapLines({})
   }, [selectedClip?.id])
 
-  // Fitted dimensions inside video frame container
+  // Fitted dimensions inside the video frame container. Shared with the click
+  // hit test in ProgramMonitor, so the box the user sees and the area that
+  // responds to a click cannot drift apart.
   const fitted = useMemo(() => {
-    const fw = videoFrameSize.width || 1
-    const fh = videoFrameSize.height || 1
-    const aw = liveAsset?.width || fw
-    const ah = liveAsset?.height || fh
-    const targetRatio = aw / ah
-    const containerRatio = fw / fh
-
-    let bw: number
-    let bh: number
-    if (containerRatio > targetRatio) {
-      bh = fh
-      bw = fh * targetRatio
-    } else {
-      bw = fw
-      bh = fw / targetRatio
-    }
-
-    return {
-      width: Math.round(bw),
-      height: Math.round(bh),
-    }
+    const size = fitMediaInFrame(videoFrameSize, liveAsset)
+    return { width: Math.round(size.width), height: Math.round(size.height) }
   }, [videoFrameSize, liveAsset])
 
   // Start drag interaction
   const handlePointerDown = useCallback((e: React.PointerEvent, mode: DragMode) => {
     if (!selectedClip || !containerRef.current) return
     e.stopPropagation()
+    onInteractionStart?.()
     e.preventDefault()
 
     const startX = e.clientX
@@ -255,7 +251,7 @@ export const TransformBoundingBox: React.FC<TransformBoundingBoxProps> = ({
 
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
-  }, [selectedClip, localTransform, clipTf, videoFrameSize, fitted, currentTime, onUpdateTransform])
+  }, [selectedClip, localTransform, clipTf, videoFrameSize, fitted, currentTime, onUpdateTransform, onInteractionStart])
 
   if (!selectedClip || !isClipActive || selectedClip.type === 'audio' || selectedClip.type === 'adjustment' || selectedClip.type === 'text') {
     return null
@@ -288,9 +284,14 @@ export const TransformBoundingBox: React.FC<TransformBoundingBoxProps> = ({
         style={{
           left: `${50 + positionX}%`,
           top: `${50 + positionY}%`,
-          width: `${fitted.width}px`,
-          height: `${fitted.height}px`,
-          transform: `translate(-50%, -50%) rotate(${rotation}deg) scale(${scale / 100})`,
+          // Sized directly rather than drawn full size and scaled down. A CSS
+          // scale shrinks the outline and the grab handles along with the box,
+          // so a small sticker ended up with a hairline border and handles too
+          // fine to hit. Baking the scale into the dimensions keeps the chrome
+          // one pixel wide at every size.
+          width: `${fitted.width * (scale / 100)}px`,
+          height: `${fitted.height * (scale / 100)}px`,
+          transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
           transformOrigin: 'center center',
         }}
       >
