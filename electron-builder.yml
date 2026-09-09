@@ -14,6 +14,11 @@ publish:
   provider: github
   owner: tuyenhm68
   repo: KomfyEdit
+  # Draft by default: a bad release that is already public cannot be recalled
+  # from clients that started downloading it. The release workflow rewrites
+  # this single line to `release` when a tag is marked [live], so keep the
+  # wording exactly as it is.
+  releaseType: draft
 
 # ffmpeg-static installs one binary for the build machine's architecture, so a
 # run that packs two of them (the mac release does) needs the right one swapped
@@ -48,9 +53,7 @@ win:
       arch:
         - x64
   icon: resources/icon.ico
-  # No version in the name, so that the permanent
-  # /releases/latest/download/KomfyEdit-Setup.exe link keeps working.
-  artifactName: ${productName}-Setup.${ext}
+  artifactName: ${productName}-${version}-win-${arch}-Setup.${ext}
 
 nsis:
   oneClick: false
@@ -81,7 +84,11 @@ mac:
         - x64
   icon: resources/icon.icns
   category: public.app-category.video
-  artifactName: ${productName}-${arch}.${ext}
+  # The arch must stay spelled "arm64": MacUpdater picks between the two builds
+  # by searching for that exact substring in the filename (MacUpdater.js,
+  # filterFilesForArch). A friendlier "mac-mx" would leave an Intel Mac free to
+  # auto-update itself onto an Apple Silicon build it cannot run.
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
 
 dmg:
   contents:
@@ -98,7 +105,7 @@ linux:
     - deb
   icon: resources/icons
   category: Video
-  artifactName: ${productName}-${arch}.${ext}
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
 
 deb:
   depends:

@@ -23,10 +23,55 @@
 ## 📥 Installation
 
 ### Option 1: Prebuilt Packages (Recommended)
-Download the latest prebuilt release for your platform from the [GitHub Releases](https://github.com/Lightricks/LTX-Desktop/releases) tab:
-- **Windows**: `KomfyEdit-Setup-x.x.x.exe`
-- **macOS**: `KomfyEdit-x.x.x.dmg` or `KomfyEdit-x.x.x-mac.zip`
-- **Linux**: `KomfyEdit-x.x.x.AppImage` or `.deb`
+
+Download the build for your machine from the [GitHub Releases](https://github.com/tuyenhm68/KomfyEdit/releases) page:
+
+| Platform | File |
+|---|---|
+| Windows 10/11 (64-bit) | `KomfyEdit-<version>-win-x64-Setup.exe` |
+| macOS, Apple Silicon (M1–M4) | `KomfyEdit-<version>-mac-arm64.dmg` |
+| macOS, Intel | `KomfyEdit-<version>-mac-x64.dmg` |
+| Linux (64-bit) | `KomfyEdit-<version>-linux-x86_64.AppImage` or `KomfyEdit-<version>-linux-amd64.deb` |
+| Linux (ARM) | `KomfyEdit-<version>-linux-arm64.AppImage` or `KomfyEdit-<version>-linux-arm64.deb` |
+
+> **KomfyEdit is not code-signed yet.** Signing certificates cost money the project does not have, so every platform shows some form of "unknown developer" warning on first launch. Getting past it is a one-time step per installation, described below.
+
+#### Windows
+
+Run the installer. SmartScreen will show *"Windows protected your PC"*: click **More info**, then **Run anyway**. The app launches normally from then on.
+
+#### macOS
+
+Open the `.dmg` and drag KomfyEdit into **Applications**. On first launch macOS refuses to open it, usually with *"KomfyEdit is damaged and can't be opened. You should move it to the Trash."*
+
+Nothing is actually damaged. That is simply the message macOS shows for an app downloaded without a notarized signature. To clear it, open **Terminal** and run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/KomfyEdit.app
+```
+
+Then open the app normally.
+
+The command removes the `com.apple.quarantine` flag that macOS attaches to anything downloaded through a browser. It does not disable Gatekeeper, does not change any system setting, and affects only this one app.
+
+If you would rather not use Terminal: double-click the app and let it be blocked, then open **System Settings → Privacy & Security**, scroll to the Security section, and click **Open Anyway** next to the message about KomfyEdit. On macOS 15 Sequoia and later this is the only supported GUI route, since Apple removed the old right-click → Open shortcut for unsigned apps.
+
+> **Auto-update does not work on macOS while the app is unsigned.** `electron-updater` refuses to install an update that is not properly signed, so on macOS you need to download each new `.dmg` yourself. Windows and Linux update themselves normally.
+
+#### Linux
+
+**AppImage** — make it executable, then run it:
+
+```bash
+chmod +x KomfyEdit-*-linux-x86_64.AppImage
+./KomfyEdit-*-linux-x86_64.AppImage
+```
+
+**Debian / Ubuntu** — install with `apt`, which resolves any missing dependencies:
+
+```bash
+sudo apt install ./KomfyEdit-*-linux-amd64.deb
+```
 
 ### Option 2: Running from Source
 If you are a developer or prefer running the latest edge build:
@@ -38,7 +83,7 @@ If you are a developer or prefer running the latest edge build:
 
 2. **Clone the Repository**:
    ```bash
-   git clone https://github.com/Lightricks/LTX-Desktop.git komfyedit
+   git clone https://github.com/tuyenhm68/KomfyEdit.git komfyedit
    cd komfyedit
    ```
 

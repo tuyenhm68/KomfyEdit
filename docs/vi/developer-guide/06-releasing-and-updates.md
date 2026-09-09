@@ -34,20 +34,36 @@ Bước đối chiếu tag với version được bỏ qua khi chạy tay — ng
 
 ---
 
+### Draft hay công bố ngay
+
+Mặc định workflow để release ở dạng **draft** — chỉ người có quyền ghi vào repo mới thấy, và `electron-updater` không thấy. Không gì tới tay người dùng cho tới khi bạn tự bấm publish.
+
+Muốn bỏ qua bước duyệt đó, thêm `-Live` khi gắn tag:
+
+```powershell
+.\publish-release.ps1 next "Sửa gấp lỗi treo khi xuất" -Live
+```
+
+Tuỳ chọn này đi tới CI thông qua chuỗi `[live]` trong message của annotated tag; workflow đọc được thì đổi `publish.releaseType` trong `electron-builder.yml` từ `draft` sang `release` trước khi build. Tag không có marker vẫn là draft, và việc đọc marker cố ý làm theo kiểu "được thì tốt" — đọc lỗi cũng rơi về draft.
+
+Chỉ dùng `-Live` cho bản bạn thực sự tin tưởng. Release đã công bố thì không rút lại được khỏi những máy đã bắt đầu tải, và khác với draft, bạn không còn khoảnh khắc nào để phát hiện ra chuyện kiểu job Linux đánh rơi mất `latest-linux.yml`.
+
 Draft **không** tự công bố. Vào tab Releases, kiểm tra đủ artifact rồi bấm **Publish release** — client chỉ thấy bản mới sau bước này. Một bản lỗi đã public thì không rút lại được khỏi những máy đã bắt đầu tải.
 
 ---
 
 ## 🏗️ Ma trận build
 
-| Job | Runner | Artifact |
+| Job | Runner | Artifact (ví dụ phiên bản 1.2.0) |
 |---|---|---|
-| `windows-x64` | `windows-latest` | `KomfyEdit-Setup.exe` |
-| `macos-arm64-and-x64` | `macos-latest` | `KomfyEdit-arm64.dmg` / `.zip`, `KomfyEdit-x64.dmg` / `.zip` |
-| `linux-x64` | `ubuntu-latest` | `KomfyEdit-x64.AppImage`, `KomfyEdit-amd64.deb` |
-| `linux-arm64` | `ubuntu-24.04-arm` | `KomfyEdit-arm64.AppImage`, `KomfyEdit-arm64.deb` |
+| `windows-x64` | `windows-latest` | `KomfyEdit-1.2.0-win-x64-Setup.exe` |
+| `macos-arm64-and-x64` | `macos-latest` | `KomfyEdit-1.2.0-mac-arm64.dmg` / `.zip` (Apple Silicon), `KomfyEdit-1.2.0-mac-x64.dmg` / `.zip` (Intel) |
+| `linux-x64` | `ubuntu-latest` | `KomfyEdit-1.2.0-linux-x86_64.AppImage`, `KomfyEdit-1.2.0-linux-amd64.deb` |
+| `linux-arm64` | `ubuntu-24.04-arm` | `KomfyEdit-1.2.0-linux-arm64.AppImage`, `KomfyEdit-1.2.0-linux-arm64.deb` |
 
-Tên file **cố ý không chứa số phiên bản**, để link cố định `releases/latest/download/KomfyEdit-Setup.exe` luôn trỏ đúng bản mới nhất.
+Vì số phiên bản nằm trong tên file, **không còn link cố định** kiểu `releases/latest/download/...` để đưa cho người dùng. Hãy dẫn họ tới trang Releases, GitHub sẽ tự hiển thị bản mới nhất.
+
+Tên trên macOS bắt buộc giữ nguyên chuỗi `arm64`. `MacUpdater.filterFilesForArch` chọn giữa hai bản bằng cách tìm chuỗi đó trong tên file, nên một nhãn thân thiện hơn như `mac-mx` sẽ khiến máy Intel có thể tự cập nhật nhầm sang bản Apple Silicon không chạy được. Các token kiến trúc còn lại (`x86_64` cho AppImage, `amd64` cho deb) là quy ước của chính hai định dạng đó, do electron-builder tự chọn.
 
 File `.zip` của macOS không thừa: `electron-updater` cài bản cập nhật macOS từ zip chứ không phải từ dmg. Bỏ nó đi là hỏng đường cập nhật trên macOS.
 

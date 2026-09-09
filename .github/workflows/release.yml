@@ -112,6 +112,37 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # A tag whose annotation carries [live] publishes straight away; anything
+      # else lands as a draft. Reading the marker is best-effort on purpose:
+      # if the tag object is not there, the answer stays "draft", which is the
+      # safe direction to fail in.
+      - name: Decide draft or published release
+        id: release_type
+        shell: bash
+        run: |
+          MODE=draft
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            MESSAGE=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" 2>/dev/null || true)
+            case "$MESSAGE" in
+              *"[live]"*) MODE=release ;;
+            esac
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "Release type: $MODE"
+
+      - name: Switch electron-builder to a published release
+        if: steps.release_type.outputs.mode == 'release'
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs')
+            const f = 'electron-builder.yml'
+            const before = fs.readFileSync(f, 'utf8')
+            const after = before.replace('releaseType: draft', 'releaseType: release')
+            if (after === before) { throw new Error('releaseType: draft not found in ' + f) }
+            fs.writeFileSync(f, after)
+          "
+
       # electron-builder publishes to the Release for the current tag and
       # generates latest.yml / latest-mac.yml / latest-linux.yml alongside the
       # installers. Nothing is signed yet, so Windows shows a SmartScreen

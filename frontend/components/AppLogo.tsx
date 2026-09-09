@@ -8,8 +8,12 @@ export function AppLogo({ className = 'h-7', showText = true }: AppLogoProps) {
   return (
     <div className={`flex items-center gap-2.5 select-none ${className}`}>
       {/* KomfyEdit Brand Icon Emblem (Exact approved brand icon) */}
+      {/* Relative, not "/icon.png": a packaged build is loaded over file://,
+          where a leading slash resolves to the root of the drive instead of
+          the app directory. Vite is configured with base "./" for the same
+          reason. */}
       <img
-        src="/icon.png"
+        src="./icon.png"
         alt="KomfyEdit Icon"
         className="h-full w-auto aspect-square flex-shrink-0 object-contain rounded-md select-none pointer-events-none"
       />

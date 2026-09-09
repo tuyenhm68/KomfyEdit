@@ -34,20 +34,36 @@ The tag/version check is skipped on a manual run — outside a tag push `GITHUB_
 
 ---
 
+### Draft or Published
+
+By default the workflow leaves the release as a **draft**, visible only to repository collaborators and invisible to `electron-updater`. Nothing reaches users until you publish it by hand.
+
+To skip that review step, tag with `-Live`:
+
+```powershell
+.\publish-release.ps1 next "Hotfix for the export crash" -Live
+```
+
+The switch travels to CI inside the annotated tag message as `[live]`; the workflow reads it and flips `publish.releaseType` in `electron-builder.yml` from `draft` to `release` before building. Anything without the marker stays a draft, and the marker is read on a best-effort basis so a failure to read it also lands on draft.
+
+Use `-Live` only for releases you are confident in. A published release cannot be recalled from clients that have already started downloading it, and unlike a draft there is no moment to notice that, say, the Linux job dropped its `latest-linux.yml`.
+
 The draft is **not** published automatically. Open the Releases tab, confirm every artifact is present, then click **Publish release** — clients only see the new version after that. A bad release that is already public cannot be recalled from machines that have started downloading it.
 
 ---
 
 ## 🏗️ Build Matrix
 
-| Job | Runner | Artifacts |
+| Job | Runner | Artifacts (for version 1.2.0) |
 |---|---|---|
-| `windows-x64` | `windows-latest` | `KomfyEdit-Setup.exe` |
-| `macos-arm64-and-x64` | `macos-latest` | `KomfyEdit-arm64.dmg` / `.zip`, `KomfyEdit-x64.dmg` / `.zip` |
-| `linux-x64` | `ubuntu-latest` | `KomfyEdit-x64.AppImage`, `KomfyEdit-amd64.deb` |
-| `linux-arm64` | `ubuntu-24.04-arm` | `KomfyEdit-arm64.AppImage`, `KomfyEdit-arm64.deb` |
+| `windows-x64` | `windows-latest` | `KomfyEdit-1.2.0-win-x64-Setup.exe` |
+| `macos-arm64-and-x64` | `macos-latest` | `KomfyEdit-1.2.0-mac-arm64.dmg` / `.zip` (Apple Silicon), `KomfyEdit-1.2.0-mac-x64.dmg` / `.zip` (Intel) |
+| `linux-x64` | `ubuntu-latest` | `KomfyEdit-1.2.0-linux-x86_64.AppImage`, `KomfyEdit-1.2.0-linux-amd64.deb` |
+| `linux-arm64` | `ubuntu-24.04-arm` | `KomfyEdit-1.2.0-linux-arm64.AppImage`, `KomfyEdit-1.2.0-linux-arm64.deb` |
 
-Filenames deliberately carry **no version number**, so the permanent link `releases/latest/download/KomfyEdit-Setup.exe` always resolves to the newest build.
+Because the version is part of the filename, there is no stable `releases/latest/download/...` link to hand out. Point people at the Releases page instead, and GitHub will offer them the newest assets.
+
+The macOS names must keep the literal string `arm64`. `MacUpdater.filterFilesForArch` picks between the two builds by searching for it in the filename, so a friendlier label like `mac-mx` would leave an Intel Mac free to auto-update itself onto an Apple Silicon build it cannot run. The arch tokens elsewhere (`x86_64` for AppImage, `amd64` for deb) are the conventions those formats expect, and electron-builder chooses them.
 
 The macOS `.zip` files are not redundant: `electron-updater` installs macOS updates from the zip, not the dmg. Removing them breaks updating on macOS.
 
