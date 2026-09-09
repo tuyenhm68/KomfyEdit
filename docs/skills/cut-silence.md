@@ -22,7 +22,8 @@ This skill defines the strict procedure for detecting and removing silent interv
 4. **FAIL CLOSED ON QC ISSUES**:
    - If `qc_check` reports errors or warnings (e.g., `CLIP_TOO_SHORT`, invalid tracks, overlaps), do NOT proceed to `edit_apply`. Adjust the patch or abort.
 5. **NEVER APPLY BLINDLY**:
-   - Always run `edit_propose` first to generate a semantic diff. Present the diff to the user and render a preview before applying.
+   - Always run `edit_propose` first to generate a semantic diff, and render a preview before applying.
+   - Never delete a silence range the user has not seen listed. The listing goes through `ask_confirm`, which blocks the run until they answer; asking in the reply text does not count.
 
 ---
 
@@ -48,7 +49,7 @@ Step 1: observe_silence
 Step 2: edit_propose (generate diff & validate)
           │
           ▼
-Step 3: Human Inspection (present diff & timeline metrics)
+Step 3: ask_confirm — list every range and BLOCK for the answer
           │
           ▼
 Step 4: render_preview (render 480p snippet around transitions)
@@ -96,11 +97,30 @@ Step 6: edit_apply (or rollback / abort if rejected)
   ```
 - Note: `edit_propose` validates invariants against the schema and returns a `patchId` with a detailed semantic diff without modifying the project file on disk.
 
-#### Step 3 — Human Inspection
-- Present the proposed changes clearly to the human editor:
-  - Original duration vs. new duration (and percentage saved).
-  - Number of silence cuts and exact timestamps.
-  - Confirmation that locked tracks are unaffected.
+#### Step 3 — Human Inspection (`ask_confirm`, blocking)
+- This is a gate, not a narration. Call `ask_confirm` and **wait for the answer**:
+  a sentence in the reply is not inspection, because the user only reads it once
+  the run — and the deletion — is over.
+- One item per silence range, so the list is a checklist of exactly what will go:
+  ```json
+  {
+    "title": "Cắt 2 khoảng lặng dài hơn 2 giây",
+    "message": "Tổng cộng 5,1 giây sẽ bị cắt khỏi video chính.",
+    "items": [
+      { "label": "1. 00:16 - 00:18", "detail": "2,4 giây", "highlight": true },
+      { "label": "2. 00:29 - 00:31", "detail": "2,7 giây", "highlight": true }
+    ],
+    "taskIndex": 2
+  }
+  ```
+- Also state, in the message: original duration vs. new duration, and the
+  thresholds the count came from — the number of ranges is a function of
+  `minDurationSec` and `noiseThresholdDb`, not a property of the video.
+- `answered: false` (dismissed, timed out, no live editor) is a **no**. Stop.
+- If the count is lower than the user expects, re-measure at a shorter
+  `minDurationSec` (e.g. `1.0`) and tell them how many shorter pauses exist, so
+  they can choose to loosen the threshold rather than being told "done" after
+  two cuts.
 - If the user requests adjustments, calibrate thresholds and return to Step 1.
 
 #### Step 4 — Low-Resolution Preview (`render_preview`)

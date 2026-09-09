@@ -166,9 +166,9 @@ export const STICKER_CATEGORIES: { id: StickerCategory | 'all' | 'custom'; label
   { id: 'custom', label: 'Đã nhập' },
 ]
 
-export const DEFAULT_STICKER_DURATION = 3.0
+export const DEFAULT_STICKER_DURATION = 1.0
 /** Fallback when the timeline size is unknown; see DEFAULT_STICKER_PIXELS. */
-export const DEFAULT_STICKER_SCALE = 40
+export const DEFAULT_STICKER_SCALE = 120
 
 /**
  * How big a freshly added sticker should be, in pixels of the project frame.
@@ -178,7 +178,7 @@ export const DEFAULT_STICKER_SCALE = 40
  * one. Callers turn this into a percentage against the frame's short edge — a
  * square sticker is fitted to that edge before the scale is applied.
  */
-export const DEFAULT_STICKER_PIXELS = 50
+export const DEFAULT_STICKER_PIXELS = 150
 
 export function getStickerDefinition(id: string): StickerDefinition | undefined {
   return STICKER_DEFINITIONS.find(s => s.id === id)

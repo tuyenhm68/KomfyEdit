@@ -52,6 +52,19 @@ function isMissingDimensions(item: { width?: number; height?: number }): boolean
 }
 
 /**
+ * A video measured before the display matrix was taken into account.
+ *
+ * Import used to record the stream size, so a phone clip filmed upright was
+ * stored as landscape — the project opened in the wrong shape and the
+ * transform handles boxed the wrong rectangle. Such an asset has dimensions,
+ * they are simply the wrong ones, so it needs re-measuring exactly once; the
+ * flag the pass writes back keeps it from happening again.
+ */
+function needsRotationRecheck(asset: Asset): boolean {
+  return asset.type === 'video' && !asset.rotationChecked
+}
+
+/**
  * The main process only accepts absolute paths, so anything relative can never
  * be migrated — no amount of retrying will resolve it. Treating such an asset
  * as migratable keeps the "needs migration" flag stuck on forever, which puts
@@ -74,13 +87,14 @@ function collectVisualAssetMetadataMigrationJobs(assets: Asset[]): VisualAssetMe
   for (const asset of assets) {
     if (!isVisualAsset(asset)) continue
 
-    if (asset.path && isMigratablePath(asset.path) && (isMissingThumbnailPair(asset) || isMissingDimensions(asset))) {
+    const needsDimensions = isMissingDimensions(asset) || needsRotationRecheck(asset)
+    if (asset.path && isMigratablePath(asset.path) && (isMissingThumbnailPair(asset) || needsDimensions)) {
       const existingJob = jobs.get(asset.path)
       jobs.set(asset.path, {
         path: asset.path,
         type: asset.type,
         needsThumbnails: (existingJob?.needsThumbnails || false) || isMissingThumbnailPair(asset),
-        needsDimensions: (existingJob?.needsDimensions || false) || isMissingDimensions(asset),
+        needsDimensions: (existingJob?.needsDimensions || false) || needsDimensions,
       })
     }
   }
@@ -111,6 +125,11 @@ function buildVisualAssetMetadataMigrationPatch(
   if (assetMetadata?.height && asset.height !== assetMetadata.height) {
     updates.height = assetMetadata.height
   }
+  // Measured with the display matrix applied, whether or not that changed the
+  // numbers — so this video is never re-measured again.
+  if (asset.type === 'video' && assetMetadata?.width && assetMetadata?.height && !asset.rotationChecked) {
+    updates.rotationChecked = true
+  }
 
   return Object.keys(updates).length > 0 ? updates : null
 }
@@ -119,7 +138,7 @@ export function hasVisualAssetMetadataForMigration(assets: Asset[]): boolean {
   return assets.some(asset => {
     if (!isVisualAsset(asset)) return false
     if (!asset.path || !isMigratablePath(asset.path)) return false
-    return isMissingThumbnailPair(asset) || isMissingDimensions(asset)
+    return isMissingThumbnailPair(asset) || isMissingDimensions(asset) || needsRotationRecheck(asset)
   })
 }
 

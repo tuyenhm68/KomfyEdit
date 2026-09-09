@@ -131,21 +131,27 @@ export function useEditorKeyboard(params: UseEditorKeyboardParams) {
           }
           break
         case 'edit.split': {
-          // Cut where the pointer is, on the track it is over. Away from the
-          // timeline there is no pointer position to use, so fall back to the
-          // playhead — selection first, else everything crossing it.
+          // Always cut at the playhead — the red line is what the user is
+          // aiming at, never the pointer. While playing the store's
+          // currentTime lags the drawn playhead, so read the live ref.
           const hover = refs.timelineHoverRef.current
           const allClips = selectClips(state)
-          const time = hover ? hover.time : commandContext.currentTime
+          const time = state.session.transport.isPlaying
+            ? refs.playbackTimeRef.current
+            : commandContext.currentTime
           const spans = (clip: (typeof allClips)[number]) =>
             clip.startTime < time && clip.startTime + clip.duration > time
 
+          // The pointer still picks *which* track to cut, but only when the
+          // user has not selected clips explicitly.
+          const selected = allClips.filter(c => sel.has(c.id) && spans(c))
           let targets: string[]
-          if (hover) {
+          if (selected.length > 0) {
+            targets = selected.map(c => c.id)
+          } else if (hover) {
             targets = allClips.filter(c => c.trackIndex === hover.trackIndex && spans(c)).map(c => c.id)
           } else {
-            const selected = allClips.filter(c => sel.has(c.id) && spans(c))
-            targets = (selected.length > 0 ? selected : allClips.filter(spans)).map(c => c.id)
+            targets = allClips.filter(spans).map(c => c.id)
           }
           // splitClipsAtTime skips locked tracks and cuts too close to an edge.
           if (targets.length > 0) editorActions.splitClipsAtTime(targets, time)

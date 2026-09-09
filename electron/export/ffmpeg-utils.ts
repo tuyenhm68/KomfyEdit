@@ -257,6 +257,49 @@ export function extractVideoFrameToFile({
   return resolvedOutputPath
 }
 
+/**
+ * The dimensions a player will actually show, read out of `ffmpeg -i` output.
+ *
+ * A phone films in landscape and tags the file with a display matrix telling
+ * the player to turn it: the stream stays 1920x1080 while every player — this
+ * app's preview included — draws it 1080x1920. Taking the stream size at face
+ * value made a vertical clip set up a landscape project, and left the transform
+ * handles boxing a landscape rectangle over a portrait picture.
+ *
+ * Exported for the tests; `getVideoDimensions` is the real entry point.
+ */
+export function parseDisplayDimensions(ffmpegOutput: string): { width: number; height: number } | null {
+  const lines = ffmpegOutput.split(/\r?\n/)
+  const streamIndex = lines.findIndex(line => line.includes('Video:'))
+  if (streamIndex < 0) return null
+
+  const match = lines[streamIndex].match(/(\d{2,5})x(\d{2,5})(?:[,\s[]|$)/)
+  if (!match) return null
+
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
+
+  // The rotation belongs to this stream, so stop at the next one. ffmpeg prints
+  // it as side data ("displaymatrix: rotation of -90.00 degrees"), and older
+  // builds as stream metadata ("rotate: 90") — accept both.
+  let rotation = 0
+  for (let index = streamIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (line.includes('Stream #')) break
+    const rotated = line.match(/rotation of\s*(-?[\d.]+)\s*degrees/)
+      || line.match(/^\s*rotate\s*:\s*(-?[\d.]+)/)
+    if (rotated) {
+      rotation = Number(rotated[1])
+      break
+    }
+  }
+
+  // A quarter turn either way swaps the axes; half a turn leaves them alone.
+  const swapped = Math.abs(Math.round(rotation / 90)) % 2 === 1
+  return swapped ? { width: height, height: width } : { width, height }
+}
+
 export function getVideoDimensions(videoPath: string): { width: number; height: number } {
   const ffmpegPath = findFfmpegPath()
   if (!ffmpegPath) {
@@ -271,20 +314,13 @@ export function getVideoDimensions(videoPath: string): { width: number; height: 
     timeout: 10000,
   })
   const output = `${result.stdout || ''}\n${result.stderr || ''}`
-  const videoStreamLine = output.split('\n').find(line => line.includes('Video:'))
-  const match = videoStreamLine?.match(/(\d{2,5})x(\d{2,5})(?:[,\s\[]|$)/)
+  const dimensions = parseDisplayDimensions(output)
 
-  if (!match) {
+  if (!dimensions) {
     throw new Error(`Could not determine video dimensions for ${videoPath}`)
   }
 
-  const width = Number(match[1])
-  const height = Number(match[2])
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    throw new Error(`Invalid video dimensions for ${videoPath}: ${match[1]}x${match[2]}`)
-  }
-
-  return { width, height }
+  return dimensions
 }
 
 export function stopExportProcess(): void {

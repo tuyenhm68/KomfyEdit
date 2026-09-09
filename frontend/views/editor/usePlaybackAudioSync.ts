@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
+import { playbackDriveModeForSpeed } from '@core/clip-speed'
 import type { TimelineClip } from '../../types/project-model'
 import { sampleClipAt, hasKeyframesForProperty } from '@core/keyframes'
 import { pathToFileUrl } from '../../lib/file-url'
@@ -169,7 +170,12 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
             : Math.max(0, clip.trimStart + timeInClip * clip.speed)
         }
 
-        const desiredRate = clip.reversed ? 1 : clip.speed
+        // Above the element's rate ceiling there is no usable audio: the
+        // element cannot play that fast, so it would drift behind the picture
+        // and play the wrong moment. Silence is the honest answer, and it
+        // matches what a speed ramp already does.
+        const drive = playbackDriveModeForSpeed(clip.speed)
+        const desiredRate = clip.reversed || drive.seekDriven ? 1 : drive.rate
 
         if (el.readyState >= 2) {
           if (!activeAudioIds.has(clip.id)) {
@@ -198,7 +204,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
               el.currentTime = target
             }
             el.playbackRate = desiredRate
-            if (clip.reversed) {
+            if (clip.reversed || drive.seekDriven) {
               el.pause()
               el.__audioPlaying = false
             } else {
@@ -208,7 +214,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
             }
           } else {
             if (el.playbackRate !== desiredRate) el.playbackRate = desiredRate
-            if (clip.reversed) {
+            if (clip.reversed || drive.seekDriven) {
               if (!el.paused) el.pause()
               el.__audioPlaying = false
             } else {

@@ -76,5 +76,29 @@ describe('buildEditPilotSystemPrompt', () => {
     expect(prompt).toMatch(/transcribe vs observe_silence/i)
     expect(prompt).toMatch(/ngữ nghĩa lời nói/i)
   })
-})
 
+  /**
+   * The agent runs in an empty temp directory, so the repo's cut-silence skill
+   * file never reaches it — whatever the run must obey has to be in here. The
+   * observed failure: silences were measured, cut and reported as done, and the
+   * user never saw which ranges were going before they went.
+   */
+  it('makes the silence checklist a blocking confirmation, not a sentence in the reply', () => {
+    const prompt = buildEditPilotSystemPrompt({ projectId: 'p1' })
+    const rules = prompt.slice(prompt.indexOf('CẮT KHOẢNG LẶNG'))
+
+    expect(rules).toContain('ask_confirm')
+    expect(rules).toMatch(/TRƯỚC edit_propose|trước khi cắt/i)
+    // One entry per range, with its timecode and length — that is the checklist.
+    expect(rules).toMatch(/MỘT item/i)
+    expect(rules).toMatch(/tổng số đoạn|tổng thời lượng/i)
+  })
+
+  it('tells the agent to report what a shorter threshold would have caught', () => {
+    const prompt = buildEditPilotSystemPrompt({ projectId: 'p1' })
+    const rules = prompt.slice(prompt.indexOf('CẮT KHOẢNG LẶNG'))
+
+    expect(rules).toContain('minDurationSec')
+    expect(rules).toMatch(/ít hơn người dùng mong đợi/i)
+  })
+})

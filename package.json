@@ -1,6 +1,6 @@
 {
   "name": "komfyedit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "KomfyEdit - Desktop Video Editor",
   "type": "module",
   "main": "dist-electron/main.js",
@@ -17,8 +17,9 @@
   "private": true,
   "packageManager": "pnpm@10.30.3",
   "scripts": {
-    "dev": "vite",
-    "dev:debug": "cross-env ELECTRON_DEBUG=1 vite",
+    "dev": "node scripts/set-dev-icon.mjs && vite",
+    "dev:icon": "node scripts/set-dev-icon.mjs --kill-stale",
+    "dev:debug": "node scripts/set-dev-icon.mjs && cross-env ELECTRON_DEBUG=1 vite",
     "typecheck": "pnpm run typecheck:renderer && pnpm run typecheck:electron",
     "test": "vitest",
     "test:run": "vitest run",

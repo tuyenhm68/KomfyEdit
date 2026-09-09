@@ -12,7 +12,7 @@ interface UseEditorMediaImportParams {
 
 export function useEditorMediaImport(params: UseEditorMediaImportParams) {
   const { currentProjectId } = params
-  const { addAssetToEditor } = useEditorActions()
+  const { addAssetToEditor, adoptTimelineSizeFromAsset } = useEditorActions()
   const { settings } = useSettings()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -82,17 +82,23 @@ export function useEditorMediaImport(params: UseEditorMediaImportParams) {
         smallThumbnailPath,
         width,
         height,
+        // The main process measures a video the way a player shows it, display
+        // matrix included, so this asset never needs the one-time re-measure.
+        ...(isVideo ? { rotationChecked: true } : {}),
         prompt: `Imported: ${file.name}`,
         resolution: 'imported',
         duration,
         createdAt: Date.now(),
       }
       addAssetToEditor(asset)
+      // Runs after the asset is in the model, so "is this the first video?"
+      // sees the project as it now stands.
+      adoptTimelineSizeFromAsset(asset)
       imported.push(asset)
     }
 
     return imported
-  }, [addAssetToEditor, currentProjectId, getMediaDuration, settings.defaultImageDuration])
+  }, [addAssetToEditor, adoptTimelineSizeFromAsset, currentProjectId, getMediaDuration, settings.defaultImageDuration])
 
   const handleImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files

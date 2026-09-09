@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { Asset, SubtitleClip, TimelineClip, Track } from '../../types/project-model'
 import { flushSync } from 'react-dom'
+import { mediaSecondsForTimelineSeconds } from '@core/clip-speed'
 import { rowIndexAtY, stableRowIndexAtY, type TimelineRowBox } from '@core/timeline-rows'
 import { resolveOverlaps, packTrack1, pruneEmptyOverlayTracks, migrateClip, type ToolType } from './video-editor-utils'
 
@@ -895,7 +896,7 @@ export function useTimelineDrag(params: UseTimelineDragParams) {
             return { ...c, startTime: newStartTime, duration: finalDuration, trimStart: finalTrimStart }
           }
           if (linkedIds.has(c.id)) {
-            const linkedNewTrimStart = c.trimStart + (newStartTime - resizingClip.originalStartTime)
+            const linkedNewTrimStart = c.trimStart + mediaSecondsForTimelineSeconds(newStartTime - resizingClip.originalStartTime, c.speed)
             return { ...c, startTime: newStartTime, duration: finalDuration, trimStart: Math.max(0, linkedNewTrimStart) }
           }
           if (c.trackIndex === clip.trackIndex && c.id !== clip.id && c.startTime < resizingClip.originalStartTime) {
@@ -984,7 +985,7 @@ export function useTimelineDrag(params: UseTimelineDragParams) {
           return { ...c, startTime: newStartTime, duration: finalDuration, trimStart: finalTrimStart }
         }
         if (linkedIds.has(c.id)) {
-          const linkedNewTrimStart = c.trimStart + (newStartTime - resizingClip.originalStartTime)
+          const linkedNewTrimStart = c.trimStart + mediaSecondsForTimelineSeconds(newStartTime - resizingClip.originalStartTime, c.speed)
           return { ...c, startTime: newStartTime, duration: finalDuration, trimStart: Math.max(0, linkedNewTrimStart) }
         }
         return c

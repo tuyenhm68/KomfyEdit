@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   MAX_CLIP_SPEED,
+  MAX_REALTIME_PLAYBACK_RATE,
   MIN_CLIP_SPEED,
   clampClipSpeed,
   formatClipSpeed,
   sliderPositionForSpeed,
+  playbackDriveModeForSpeed,
   speedForSliderPosition,
 } from '../src/clip-speed'
 
@@ -83,5 +85,32 @@ describe('how a speed is written', () => {
     expect(formatClipSpeed(2.5)).toBe('2.5x')
     expect(formatClipSpeed(100)).toBe('100x')
     expect(formatClipSpeed(0.1)).toBe('0.1x')
+  })
+})
+
+describe('how the preview drives a clip at speed', () => {
+  it('plays the element normally up to the rate ceiling', () => {
+    for (const speed of [0.5, 1, 4, MAX_REALTIME_PLAYBACK_RATE]) {
+      const drive = playbackDriveModeForSpeed(speed)
+      expect(drive.seekDriven).toBe(false)
+      expect(drive.rate).toBeCloseTo(speed, 6)
+    }
+  })
+
+  it('steps by seeking past the ceiling, where no element can keep up', () => {
+    // A media element clamps playbackRate at 16. Asking it to play at 40x and
+    // letting it run left it trailing the playhead, showing frames from
+    // earlier in the file — footage from elsewhere appearing to cut in.
+    for (const speed of [16.1, 40, 100]) {
+      expect(playbackDriveModeForSpeed(speed).seekDriven).toBe(true)
+    }
+  })
+
+  it('never asks an element for a rate it would refuse', () => {
+    for (const speed of [0.1, 1, 16, 50, 100]) {
+      const drive = playbackDriveModeForSpeed(speed)
+      expect(drive.rate).toBeGreaterThanOrEqual(0.1)
+      expect(drive.rate).toBeLessThanOrEqual(MAX_REALTIME_PLAYBACK_RATE)
+    }
   })
 })

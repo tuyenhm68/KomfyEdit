@@ -1263,13 +1263,15 @@ export function ClipPropertiesPanel() {
         {tab === 'video' && (selectedClip.type === 'video' || selectedClip.type === 'image') && (
           <div className="pt-3 border-t border-zinc-800">
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-semibold text-zinc-400">Blend Mode</label>
+              <label className="text-xs font-semibold text-zinc-400">
+                {t('clipProperties.blendModeTitle')}
+              </label>
               {selectedClip.blendMode && selectedClip.blendMode !== 'normal' && (
                 <button
                   className="text-[10px] text-zinc-500 hover:text-blue-400 transition-colors"
                   onClick={() => setClipBlendMode(selectedClip.id, 'normal')}
                 >
-                  Reset
+                  {t('common.reset')}
                 </button>
               )}
             </div>
@@ -1280,7 +1282,7 @@ export function ClipPropertiesPanel() {
             >
               {BLEND_MODES.map((mode) => (
                 <option key={mode.id} value={mode.id}>
-                  {mode.label}
+                  {t(`clipProperties.blendModes.${mode.id}`) || mode.label}
                 </option>
               ))}
             </select>

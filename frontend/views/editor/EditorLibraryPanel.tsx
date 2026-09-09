@@ -1087,13 +1087,15 @@ function StickersLibrary({
       }
       if (!searchQuery.trim()) return true
       const q = searchQuery.toLowerCase().trim()
+      const localizedName = t(`library.stickers.items.${sticker.id}` as any)
       return (
         sticker.name.toLowerCase().includes(q) ||
+        (localizedName && localizedName.toLowerCase().includes(q)) ||
         sticker.id.toLowerCase().includes(q) ||
         sticker.keywords.some(k => k.toLowerCase().includes(q))
       )
     })
-  }, [selectedCategory, searchQuery])
+  }, [selectedCategory, searchQuery, t])
 
   const filteredCustomStickers = useMemo(() => {
     if (selectedCategory !== 'all' && selectedCategory !== 'custom') return []
@@ -1178,6 +1180,8 @@ function StickersLibrary({
               ? customStickers.length
               : STICKER_DEFINITIONS.filter(s => s.category === cat.id).length
 
+          const categoryLabel = t(`library.stickers.categories.${cat.id}` as any) || cat.label
+
           return (
             <button
               key={cat.id}
@@ -1188,7 +1192,7 @@ function StickersLibrary({
                   : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 border border-zinc-800'
               }`}
             >
-              {cat.label} {count > 0 && <span className="text-[10px] opacity-75">({count})</span>}
+              {categoryLabel} {count > 0 && <span className="text-[10px] opacity-75">({count})</span>}
             </button>
           )
         })}
@@ -1217,29 +1221,32 @@ function StickersLibrary({
                   </h4>
                 )}
                 <div className="grid grid-cols-3 gap-2">
-                  {filteredBuiltInStickers.map(sticker => (
-                    <div
-                      key={sticker.id}
-                      onClick={() => handleAddBuiltIn(sticker.id)}
-                      title={`${sticker.name} - ${t('library.stickers.clickToAdd')}`}
-                      className="group relative flex flex-col items-center justify-center rounded-lg border border-zinc-800/80 bg-zinc-900/50 p-2.5 hover:border-accent/60 hover:bg-zinc-800/90 transition-all cursor-pointer shadow-sm"
-                    >
-                      <div className="flex h-14 w-14 items-center justify-center">
-                        <img
-                          src={`/stickers/${sticker.filename}`}
-                          alt={sticker.name}
-                          className="max-h-12 max-w-12 object-contain filter drop-shadow-md group-hover:scale-110 transition-transform duration-150"
-                          loading="lazy"
-                        />
+                  {filteredBuiltInStickers.map(sticker => {
+                    const stickerName = t(`library.stickers.items.${sticker.id}` as any) || sticker.name
+                    return (
+                      <div
+                        key={sticker.id}
+                        onClick={() => handleAddBuiltIn(sticker.id)}
+                        title={`${stickerName} - ${t('library.stickers.clickToAdd')}`}
+                        className="group relative flex flex-col items-center justify-center rounded-lg border border-zinc-800/80 bg-zinc-900/50 p-2.5 hover:border-accent/60 hover:bg-zinc-800/90 transition-all cursor-pointer shadow-sm"
+                      >
+                        <div className="flex h-14 w-14 items-center justify-center">
+                          <img
+                            src={`/stickers/${sticker.filename}`}
+                            alt={stickerName}
+                            className="max-h-12 max-w-12 object-contain filter drop-shadow-md group-hover:scale-110 transition-transform duration-150"
+                            loading="lazy"
+                          />
+                        </div>
+                        <span className="mt-1 w-full truncate text-center text-[10px] text-zinc-400 group-hover:text-zinc-200">
+                          {stickerName}
+                        </span>
+                        <div className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-zinc-950 opacity-0 shadow transition-opacity group-hover:opacity-100">
+                          <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
+                        </div>
                       </div>
-                      <span className="mt-1 w-full truncate text-center text-[10px] text-zinc-400 group-hover:text-zinc-200">
-                        {sticker.name}
-                      </span>
-                      <div className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-zinc-950 opacity-0 shadow transition-opacity group-hover:opacity-100">
-                        <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}

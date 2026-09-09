@@ -8,6 +8,7 @@ import { AppLogo } from '../components/AppLogo'
 import { Button } from '../components/ui/button'
 import { pathToFileUrl } from '../lib/file-url'
 import type { Project } from '../types/project-model'
+import { getProjectThumbnailAsset } from '@core/video-editor-utils'
 import { useProjectReferencesMigration } from '../hooks/useProjectReferencesMigration'
 
 function formatDate(timestamp: number): string {
@@ -30,13 +31,15 @@ function ProjectCard({ project, onOpen, onDelete, onRename, renameLabel, deleteL
   deleteLabel: string
 }) {
   const [showMenu, setShowMenu] = useState(false)
-  const [imgError, setImgError] = useState(false)
+  const [thumbError, setThumbError] = useState(false)
+  const [videoError, setVideoError] = useState(false)
   
-  // Keep existing representative selection logic: prefer first image, else first asset.
-  const representativeAsset = project.assets.find(a => a.type === 'image') || project.assets[0] || null
+  // Prioritize first video frame from Track 1 (V1), ignoring stickers
+  const representativeAsset = useMemo(() => getProjectThumbnailAsset(project), [project])
   const representativeUrl = representativeAsset?.path ? pathToFileUrl(representativeAsset.path) : null
-  const representativeBigThumbnailUrl = representativeAsset?.bigThumbnailPath
-    ? pathToFileUrl(representativeAsset.bigThumbnailPath)
+  const representativeThumbnailPath = representativeAsset?.bigThumbnailPath || representativeAsset?.smallThumbnailPath
+  const representativeThumbnailUrl = representativeThumbnailPath
+    ? pathToFileUrl(representativeThumbnailPath)
     : null
 
   return (
@@ -46,47 +49,47 @@ function ProjectCard({ project, onOpen, onDelete, onRename, renameLabel, deleteL
     >
       {/* Thumbnail */}
       <div className="aspect-video bg-zinc-800 flex items-center justify-center relative overflow-hidden">
-        {representativeAsset && !imgError ? (
+        {representativeAsset ? (
           representativeAsset.type === 'video' ? (
-            representativeBigThumbnailUrl ? (
+            representativeThumbnailUrl && !thumbError ? (
               <img
-                src={representativeBigThumbnailUrl}
+                src={representativeThumbnailUrl}
                 alt={project.name}
                 className="w-full h-full object-cover"
-                onError={() => setImgError(true)}
+                onError={() => setThumbError(true)}
               />
-            ) : representativeUrl ? (
+            ) : representativeUrl && !videoError ? (
               <video
                 src={representativeUrl}
                 className="w-full h-full object-cover"
                 muted
                 preload="metadata"
-                onError={() => setImgError(true)}
+                onError={() => setVideoError(true)}
               />
             ) : (
-              <Folder className="h-12 w-12 text-zinc-600" />
+              <Folder className="h-7 w-7 sm:h-8 sm:w-8 text-zinc-600" />
             )
-          ) : representativeUrl ? (
+          ) : representativeUrl && !thumbError ? (
             <img
               src={representativeUrl}
               alt={project.name}
               className="w-full h-full object-cover"
-              onError={() => setImgError(true)}
+              onError={() => setThumbError(true)}
             />
           ) : (
-            <Folder className="h-12 w-12 text-zinc-600" />
+            <Folder className="h-7 w-7 sm:h-8 sm:w-8 text-zinc-600" />
           )
         ) : (
-          <Folder className="h-12 w-12 text-zinc-600" />
+          <Folder className="h-7 w-7 sm:h-8 sm:w-8 text-zinc-600" />
         )}
         {/* Hover overlay */}
         <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
       
       {/* Info */}
-      <div className="p-3">
-        <h3 className="font-medium text-white truncate">{project.name}</h3>
-        <p className="text-xs text-zinc-500 mt-1">{formatDate(project.updatedAt)}</p>
+      <div className="p-2.5">
+        <h3 className="font-medium text-xs sm:text-sm text-white truncate">{project.name}</h3>
+        <p className="text-[11px] text-zinc-500 mt-0.5">{formatDate(project.updatedAt)}</p>
       </div>
       
       {/* Menu button */}
@@ -95,29 +98,29 @@ function ProjectCard({ project, onOpen, onDelete, onRename, renameLabel, deleteL
           e.stopPropagation()
           setShowMenu(!showMenu)
         }}
-        className="absolute top-2 right-2 p-1.5 rounded bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
+        className="absolute top-1.5 right-1.5 p-1 rounded bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
       >
-        <MoreVertical className="h-4 w-4 text-white" />
+        <MoreVertical className="h-3.5 w-3.5 text-white" />
       </button>
       
       {/* Dropdown menu */}
       {showMenu && (
         <div 
-          className="absolute top-10 right-2 bg-zinc-800 rounded-lg shadow-lg border border-zinc-700 py-1 z-10 min-w-[120px]"
+          className="absolute top-8 right-1.5 bg-zinc-800 rounded-lg shadow-lg border border-zinc-700 py-1 z-10 min-w-[110px]"
           onClick={(e) => e.stopPropagation()}
         >
           <button
             onClick={() => { onRename(); setShowMenu(false) }}
-            className="w-full px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-700 flex items-center gap-2"
+            className="w-full px-2.5 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700 flex items-center gap-1.5"
           >
-            <Pencil className="h-4 w-4" />
+            <Pencil className="h-3.5 w-3.5" />
             {renameLabel}
           </button>
           <button
             onClick={() => { onDelete(); setShowMenu(false) }}
-            className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-zinc-700 flex items-center gap-2"
+            className="w-full px-2.5 py-1.5 text-left text-xs text-red-400 hover:bg-zinc-700 flex items-center gap-1.5"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-3.5 w-3.5" />
             {deleteLabel}
           </button>
         </div>
@@ -311,7 +314,7 @@ export function Home() {
               </Button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
               {projects.map(project => (
                 <ProjectCard
                   key={project.id}

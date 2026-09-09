@@ -1,4 +1,4 @@
-﻿import { z } from 'zod'
+import { z } from 'zod'
 
 export const clipBlendModeSchema = z.enum([
   'normal',
@@ -21,37 +21,37 @@ export interface BlendModeDefinition {
 export const BLEND_MODE_DEFINITIONS: Record<ClipBlendMode, BlendModeDefinition> = {
   normal: {
     id: 'normal',
-    label: 'Normal (Bình thường)',
+    label: 'Normal',
     cssMixBlendMode: 'normal',
     ffmpegBlendMode: 'normal',
   },
   multiply: {
     id: 'multiply',
-    label: 'Multiply (Nhân)',
+    label: 'Multiply',
     cssMixBlendMode: 'multiply',
     ffmpegBlendMode: 'multiply',
   },
   screen: {
     id: 'screen',
-    label: 'Screen (Lọc sáng)',
+    label: 'Screen',
     cssMixBlendMode: 'screen',
     ffmpegBlendMode: 'screen',
   },
   overlay: {
     id: 'overlay',
-    label: 'Overlay (Chồng phủ)',
+    label: 'Overlay',
     cssMixBlendMode: 'overlay',
     ffmpegBlendMode: 'overlay',
   },
   add: {
     id: 'add',
-    label: 'Add (Cộng sáng)',
+    label: 'Add',
     cssMixBlendMode: 'plus-lighter',
     ffmpegBlendMode: 'addition',
   },
   difference: {
     id: 'difference',
-    label: 'Difference (Khác biệt)',
+    label: 'Difference',
     cssMixBlendMode: 'difference',
     ffmpegBlendMode: 'difference',
   },

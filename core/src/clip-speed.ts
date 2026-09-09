@@ -60,3 +60,54 @@ export function formatClipSpeed(speed: number): string {
   const rounded = Math.round(clamped * 100) / 100
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}x`
 }
+
+/**
+ * The fastest a media element can actually play in the browser.
+ *
+ * Chrome and friends clamp `playbackRate` to 16; asking for more is either
+ * ignored or throws. Above this the element cannot keep up with the timeline,
+ * and what shows on screen is whatever it managed to decode — frames from
+ * further back in the file, corrected by a seek, then falling behind again.
+ * That reads as the clip stuttering between the right moment and an earlier
+ * one, which looks like footage from elsewhere in the video mixed in.
+ */
+export const MAX_REALTIME_PLAYBACK_RATE = 16
+
+export interface PlaybackDriveMode {
+  /** What to set on the element. Meaningless while `seekDriven` is true. */
+  rate: number
+  /**
+   * Whether the element has to be stepped by seeking instead of played.
+   *
+   * Past the element's rate ceiling there is no way to play in real time, so
+   * the monitor pauses it and moves it frame by frame. Choppier, but every
+   * frame shown is the right one — and at 20x you are seeing every twentieth
+   * frame regardless.
+   */
+  seekDriven: boolean
+}
+
+/** How the preview should drive a media element for a given clip speed. */
+export function playbackDriveModeForSpeed(speed: number): PlaybackDriveMode {
+  const clamped = clampClipSpeed(speed)
+  return clamped > MAX_REALTIME_PLAYBACK_RATE
+    ? { rate: 1, seekDriven: true }
+    : { rate: Math.max(0.1, clamped), seekDriven: false }
+}
+
+/**
+ * How much of the source file a stretch of timeline consumes.
+ *
+ * `trimStart` and `trimEnd` are measured in the source file's own seconds,
+ * while `startTime` and `duration` are measured on the timeline. Speed is the
+ * exchange rate between the two, and forgetting it is silent: at 1x the two
+ * units are equal, so a conversion that omits speed looks right until someone
+ * retimes a clip. A cut in a 6x clip then set the second half's `trimStart` six
+ * times too early, and it replayed footage the first half had already shown.
+ */
+export function mediaSecondsForTimelineSeconds(
+  timelineSeconds: number,
+  speed: number | undefined,
+): number {
+  return timelineSeconds * clampClipSpeed(speed ?? 1)
+}

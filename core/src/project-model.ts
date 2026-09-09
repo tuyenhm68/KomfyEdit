@@ -377,6 +377,20 @@ export const assetSchema = z.object({
   colorLabel: z.string().optional(),
   proxyPath: z.string().optional(),
   proxyStatus: z.enum(['none', 'generating', 'ready', 'error']).optional(),
+  /**
+   * Where the asset came from. Absent means a file the user imported, which is
+   * the only kind the media panel lists — anything the app created on the
+   * user's behalf is still needed for clip lookups but stays out of that list.
+   */
+  source: z.enum(['sticker']).optional(),
+  /**
+   * Whether `width`/`height` are the size a player shows rather than the size
+   * the stream is stored at. Import used to read the stream size and ignore the
+   * display matrix a phone writes, so a vertical clip was recorded as
+   * landscape. Absent on a video means those numbers predate the fix and are
+   * re-measured once, on the next open.
+   */
+  rotationChecked: z.boolean().optional(),
 })
 
 const LEGACY_LUT_MAPPING: Record<string, string> = {

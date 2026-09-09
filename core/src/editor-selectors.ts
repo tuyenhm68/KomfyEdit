@@ -931,8 +931,18 @@ export function equalAssetBins(left: AssetBinListItem[], right: AssetBinListItem
   })
 }
 
+/**
+ * The media panel is the list of files the user imported from their machine.
+ * A sticker dropped on the timeline still needs an asset for clip lookups, but
+ * showing it here left blank tiles the user never asked for. Projects saved
+ * before `source` existed are recognised by the prompt addStickerClip writes.
+ */
+function isUserImportedAsset(asset: Asset): boolean {
+  return asset.source !== 'sticker' && !asset.prompt.startsWith('Sticker: ')
+}
+
 export function selectFilteredAssets(state: EditorState, filters: AssetListFilters): Asset[] {
-  let result = selectAssets(state)
+  let result = selectAssets(state).filter(isUserImportedAsset)
   if (filters.assetFilter && filters.assetFilter !== 'all') {
     result = result.filter(asset => asset.type === filters.assetFilter)
   }

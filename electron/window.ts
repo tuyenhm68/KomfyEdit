@@ -17,11 +17,28 @@ export function createWindow(): BrowserWindow {
     ? path.join(getCurrentDir(), 'dist-electron', 'preload.js')
     : path.join(app.getAppPath(), 'dist-electron', 'preload.js')
 
-  // App icon — use .ico on Windows, .png elsewhere
-  const iconExt = process.platform === 'win32' ? 'icon.ico' : 'icon.png'
-  const iconPath = path.join(getCurrentDir(), 'resources', iconExt)
-  logger.info(`[icon] Loading app icon from: ${iconPath} | exists: ${fs.existsSync(iconPath)}`)
-  const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : undefined
+  // App icon — .ico on Windows, .png elsewhere. getCurrentDir() is the cwd in
+  // dev, so also look next to the app path in case Electron was started from
+  // somewhere else, and fall back to the .png when the .ico fails to decode.
+  const iconNames = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png']
+  const iconRoots = [getCurrentDir(), app.getAppPath()]
+  let appIcon: Electron.NativeImage | undefined
+  for (const root of iconRoots) {
+    for (const name of iconNames) {
+      const iconPath = path.join(root, 'resources', name)
+      if (!fs.existsSync(iconPath)) continue
+      const candidate = nativeImage.createFromPath(iconPath)
+      if (candidate.isEmpty()) {
+        logger.warn(`[icon] Failed to decode app icon: ${iconPath}`)
+        continue
+      }
+      logger.info(`[icon] Loaded app icon from: ${iconPath}`)
+      appIcon = candidate
+      break
+    }
+    if (appIcon) break
+  }
+  if (!appIcon) logger.warn('[icon] No app icon found; using the Electron default')
 
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -49,6 +66,10 @@ export function createWindow(): BrowserWindow {
   } else {
     mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
   }
+
+  // Windows sometimes keeps the launching exe's icon on the taskbar button
+  // unless the icon is set on the live window as well as in the constructor.
+  if (appIcon) mainWindow.setIcon(appIcon)
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.maximize()

@@ -34,6 +34,7 @@ import {
 } from './editor-selectors'
 import { TransformBoundingBox } from './preview/TransformBoundingBox'
 import { clipScreenBox } from '@core/video-editor-utils'
+import { playbackDriveModeForSpeed } from '@core/clip-speed'
 import { MaskBoundingBox } from './preview/MaskBoundingBox'
 import { useEditorActions, useEditorStore } from './editor-store'
 import { useRenderCacheStore } from './render-cache-store'
@@ -80,6 +81,13 @@ interface FrameOverlayState {
   crossDissolveType: string
   compositingStack: TimelineClip[]
   activeTextClips: TimelineClip[]
+  /**
+   * Stickers are overlays, never the program picture. Letting one become the
+   * active clip swapped the video underneath between the compositing element
+   * and the video pool every time a sticker began or ended, and the swap
+   * showed as a flash in the middle of playback.
+   */
+  activeStickerClips: TimelineClip[]
   activeSubtitles: SubtitleClip[]
   activeLetterbox: ActiveLetterboxState | null
   activeAdjustmentEffects: AdjustmentEffectState[]
@@ -107,6 +115,7 @@ interface FrameRenderCache {
   mediaClips: TimelineClip[]
   videoClips: TimelineClip[]
   textClips: TimelineClip[]
+  stickerClips: TimelineClip[]
   adjustmentClips: TimelineClip[]
   audioClips: TimelineClip[]
   subtitles: SubtitleClip[]
@@ -165,9 +174,11 @@ function buildFrameRenderCache(
 ): FrameRenderCache {
   return {
     transitions,
-    mediaClips: clips.filter(clip => clip.type !== 'audio' && clip.type !== 'adjustment' && clip.type !== 'text'),
+    mediaClips: clips.filter(clip =>
+      clip.type !== 'audio' && clip.type !== 'adjustment' && clip.type !== 'text' && !isStickerClip(clip)),
     videoClips: clips.filter(clip => clip.asset?.type === 'video' && clip.type !== 'audio' && clip.type !== 'adjustment' && clip.type !== 'text'),
     textClips: clips.filter(clip => clip.type === 'text' && Boolean(clip.textStyle)),
+    stickerClips: clips.filter(isStickerClip),
     adjustmentClips: clips.filter(clip => clip.type === 'adjustment'),
     audioClips: clips.filter(clip => clip.type === 'audio'),
     subtitles,
@@ -183,6 +194,10 @@ function buildFrameRenderCache(
  * layer did not, so such a clip rendered nothing at all — and a filter applied
  * to it had nowhere to show, while the video underneath kept working.
  */
+function isStickerClip(clip: TimelineClip): boolean {
+  return Boolean(clip.stickerId)
+}
+
 function isImageClip(clip: TimelineClip | null | undefined): boolean {
   return Boolean(clip && (clip.asset?.type === 'image' || clip.type === 'image'))
 }
@@ -257,8 +272,9 @@ function getTransitionAtTime(
   return null
 }
 
-function getActiveTextClips(textClips: TimelineClip[], tracks: Track[], time: number): TimelineClip[] {
-  return textClips
+/** The overlay clips — text or sticker — covering this instant, lowest track first. */
+function getActiveOverlayClips(overlayClips: TimelineClip[], tracks: Track[], time: number): TimelineClip[] {
+  return overlayClips
     .filter(clip =>
       tracks[clip.trackIndex]?.enabled !== false &&
       time >= clip.startTime &&
@@ -312,7 +328,6 @@ function isNonOpaqueClip(clip: TimelineClip): boolean {
   if (clip.chromaKey?.enabled) return true
   if (clip.blendMode && clip.blendMode !== 'normal') return true
   if (clip.mask && clip.mask.enabled !== false) return true
-  if (clip.stickerId) return true
   if (clip.trackIndex > 0) return true
   if (isImageClip(clip)) return true
   if (clip.transform && (clip.transform.scale < 100 || clip.transform.positionX !== 0 || clip.transform.positionY !== 0)) return true
@@ -495,7 +510,8 @@ function deriveFrameRenderState(cache: FrameRenderCache, tracks: Track[], time: 
     crossDissolveProgress: dissolve?.progress ?? 0,
     crossDissolveType: dissolve?.type ?? 'dissolve',
     compositingStack,
-    activeTextClips: getActiveTextClips(cache.textClips, tracks, time),
+    activeTextClips: getActiveOverlayClips(cache.textClips, tracks, time),
+    activeStickerClips: getActiveOverlayClips(cache.stickerClips, tracks, time),
     activeSubtitles: getActiveSubtitles(cache.subtitles, tracks, time),
     activeLetterbox: getActiveLetterbox(cache.adjustmentClips, tracks, time),
     activeAdjustmentEffects: getActiveAdjustmentEffects(cache.adjustmentClips, tracks, time),
@@ -567,6 +583,7 @@ function sameFrameOverlayState(a: FrameOverlayState, b: FrameOverlayState): bool
     sameDissolve(a.crossDissolve, b.crossDissolve) &&
     sameClipList(a.compositingStack, b.compositingStack) &&
     sameClipList(a.activeTextClips, b.activeTextClips) &&
+    sameClipList(a.activeStickerClips, b.activeStickerClips) &&
     sameSubtitleList(a.activeSubtitles, b.activeSubtitles) &&
     sameLetterbox(a.activeLetterbox, b.activeLetterbox) &&
     sameClipList(a.audioOnlyClips, b.audioOnlyClips) &&
@@ -729,6 +746,8 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const transitionBgRef = React.useRef<HTMLDivElement | null>(null)
   const videoPoolRef = React.useRef<Map<string, HTMLVideoElement>>(new Map())
   const compositingMediaRefs = React.useRef<Map<string, HTMLVideoElement | HTMLImageElement>>(new Map())
+  /** Sticker overlay images by clip id, styled per frame in applyFrameVisuals. */
+  const stickerImageRefs = React.useRef<Map<string, HTMLImageElement>>(new Map())
   const activePoolPathRef = React.useRef('')
   const activePoolClipIdRef = React.useRef<string | null>(null)
   const contributorSyncStatesRef = React.useRef<Map<string, VideoContributorSyncState>>(new Map())
@@ -809,6 +828,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
       crossDissolveType: initial.crossDissolveType,
       compositingStack: initial.compositingStack,
       activeTextClips: initial.activeTextClips,
+      activeStickerClips: initial.activeStickerClips,
       activeSubtitles: initial.activeSubtitles,
       activeLetterbox: initial.activeLetterbox,
       activeAdjustmentEffects: initial.activeAdjustmentEffects,
@@ -878,6 +898,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
         crossDissolveType: nextState.crossDissolveType,
         compositingStack: nextState.compositingStack,
         activeTextClips: nextState.activeTextClips,
+        activeStickerClips: nextState.activeStickerClips,
         activeSubtitles: nextState.activeSubtitles,
         activeLetterbox: nextState.activeLetterbox,
         activeAdjustmentEffects: nextState.activeAdjustmentEffects,
@@ -946,15 +967,20 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     }
 
     const targetTime = getClipTargetTime(clip, video.duration, atTime)
-    const shouldPause = paused || clip.reversed
-    const driftThreshold = shouldPause ? 0.04 : 0.3
 
     const currentSpeed = hasKeyframesForProperty(clip, 'speed')
       ? sampleClipAt(clip, Math.max(0, atTime - clip.startTime)).speed
       : clip.speed
 
-    const clampedRate = Math.max(0.1, Math.min(16, currentSpeed))
-    video.playbackRate = clip.reversed ? 1 : clampedRate
+    // Past the element's rate ceiling there is no playing in real time, so the
+    // clip is stepped by seeking instead. Letting it play on regardless left it
+    // running far behind the playhead and showing frames from earlier in the
+    // file, which looked like another part of the video cutting in.
+    const drive = playbackDriveModeForSpeed(currentSpeed)
+    const shouldPause = paused || clip.reversed || drive.seekDriven
+    const driftThreshold = shouldPause ? 0.04 : 0.3
+
+    video.playbackRate = clip.reversed || drive.seekDriven ? 1 : drive.rate
     if (!Number.isNaN(targetTime) && (forceSeek || Math.abs(video.currentTime - targetTime) > driftThreshold)) {
       if (!shouldPause && typeof (video as { fastSeek?: (time: number) => void }).fastSeek === 'function' && !forceSeek) {
         ;(video as { fastSeek: (time: number) => void }).fastSeek(targetTime)
@@ -1226,6 +1252,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     }
 
     if (activeImageRef.current && activeClip && isImageClip(activeClip)) {
+      activeImageRef.current.style.display = ''
       const baseStyle = gradedStyle(activeClip, Math.max(0, atTime - activeClip.startTime))
       const opacity = crossDissolve
         ? Number(layerStyles?.outgoing.opacity ?? 1) * ((crossDissolve.outgoing.opacity ?? 100) / 100)
@@ -1237,6 +1264,18 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
       }
     } else if (activeImageRef.current) {
       clearEffectStyle(activeImageRef.current)
+      activeImageRef.current.style.opacity = '0'
+      activeImageRef.current.style.display = 'none'
+    }
+
+    // Stickers sit above the picture and carry their own transform, opacity and
+    // keyframes, exactly as they did when one of them was the active layer.
+    for (const stickerClip of state.activeStickerClips) {
+      const element = stickerImageRefs.current.get(stickerClip.id)
+      if (!element) continue
+      const baseStyle = gradedStyle(stickerClip, Math.max(0, atTime - stickerClip.startTime))
+      applyEffectStyle(element, baseStyle, typeof baseStyle.opacity === 'number' ? baseStyle.opacity : undefined)
+      element.style.transform = baseStyle.transform ? String(baseStyle.transform) : ''
     }
 
     const lutCanvas = lutCanvasRef.current?.getCanvas()
@@ -1413,6 +1452,8 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     for (const [clipId, element] of compositingMediaRefs.current.entries()) {
       if (!compositingIds.has(clipId)) {
         clearEffectStyle(element)
+        element.style.opacity = '0'
+        element.style.display = 'none'
       }
     }
 
@@ -1449,6 +1490,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     for (const clip of compositingStack) {
       const element = compositingMediaRefs.current.get(clip.id)
       if (!element) continue
+      element.style.display = ''
 
       const inherited = state.compositingFilters[clip.id]
       const assignedSlot = slotMap.get(clip.id)
@@ -1701,6 +1743,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const monitorClip = activeClip
   const compositingStack = frameScene.compositingStack
   const activeTextClips = frameScene.activeTextClips
+  const activeStickerClips = frameScene.activeStickerClips
 
   /**
    * Clicking the picture selects the clip under the pointer.
@@ -1733,7 +1776,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     const y = event.clientY - rect.top
     const frame = { width: rect.width, height: rect.height }
 
-    const candidates = [...compositingStack, ...(activeClip ? [activeClip] : [])]
+    const candidates = [...compositingStack, ...(activeClip ? [activeClip] : []), ...activeStickerClips]
     for (let i = candidates.length - 1; i >= 0; i--) {
       const clip = candidates[i]
       if (!clip || clip.type === 'audio') continue
@@ -1746,7 +1789,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     }
 
     clearClipSelection()
-  }, [activeClip, assets, clearClipSelection, compositingStack, selectClip])
+  }, [activeClip, activeStickerClips, assets, clearClipSelection, compositingStack, selectClip])
   const activeSubtitles = frameScene.activeSubtitles
   const activeLetterbox = frameScene.activeLetterbox
   const activeAdjustmentEffects = frameScene.activeAdjustmentEffects
@@ -2139,7 +2182,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                   {/* Note: Clip-level masks will be implemented in KE-501 (resolved in KE-106). */}
 
                   {/* Audio waveform or empty state when no video/image clip is visible */}
-                  {!monitorClip && (() => {
+                  {!monitorClip && activeStickerClips.length === 0 && (() => {
                     const audioAtPlayhead = frameScene.audioOnlyClips
                     return audioAtPlayhead.length > 0 ? (
                       <div className="absolute inset-0">
@@ -2221,6 +2264,26 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                   </React.Fragment>
                 )
               })}
+
+              {/* Sticker overlay clips. Above the picture and any transition
+                  between shots, but below the pre-rendered segment cache at
+                  z-15, which already has the sticker composited into it. */}
+              {activeStickerClips.map(sc => (
+                <img
+                  key={`sticker-${sc.id}`}
+                  src={pathToFileUrl(getClipPath(sc) || sc.asset?.path || '')}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-contain pointer-events-none z-[14]"
+                  ref={(el) => {
+                    if (el) stickerImageRefs.current.set(sc.id, el)
+                    else stickerImageRefs.current.delete(sc.id)
+                  }}
+                  onLoad={() => {
+                    const last = lastFrameRequestRef.current
+                    if (last) applyFrameVisuals(last.state, last.mode)
+                  }}
+                />
+              ))}
 
               {/* Text overlay clips */}
               {activeTextClips.map(tc => {

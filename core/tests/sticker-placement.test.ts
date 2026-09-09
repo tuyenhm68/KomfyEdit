@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createInitialEditorState } from '../src/editor-state'
 import { addStickerClip, setCurrentTime } from '../src/editor-actions'
 import { selectActiveTimeline, selectTracks } from '../src/editor-selectors'
+import { DEFAULT_STICKER_PIXELS } from '../src/stickers'
 import type { Timeline } from '../src/project-model'
 
 /**
@@ -110,24 +111,24 @@ describe('adding a sticker with the playhead further along', () => {
 })
 
 describe('the size a new sticker starts at', () => {
-  it('is about 50px of the project frame, not a fixed percentage', () => {
+  it('is about DEFAULT_STICKER_PIXELS of the project frame, not a fixed percentage', () => {
     // 720x1280 frame: a square sticker is fitted to the 720 short edge first,
-    // so 50px is 50/720 of it.
+    // so DEFAULT_STICKER_PIXELS is measured against it.
     const state = addStickerClip(baseState(), { stickerId: 'fire' })
     const clip = selectActiveTimeline(state)!.clips[0]
 
     const shortEdge = 720
     const renderedPx = (clip.transform!.scale / 100) * shortEdge
-    expect(renderedPx).toBeCloseTo(50, 0)
+    expect(renderedPx).toBeCloseTo(DEFAULT_STICKER_PIXELS, 0)
   })
 
   it('scales with the frame, so a 4K timeline does not get a giant sticker', () => {
     const state = addStickerClip(baseState(), { stickerId: 'fire' })
     const small = selectActiveTimeline(state)!.clips[0].transform!.scale
 
-    // Same 50px target on a much larger frame means a much smaller percentage.
+    // Same target on a much larger frame means a reasonable percentage.
     expect(small).toBeGreaterThan(0)
-    expect(small).toBeLessThan(20)
+    expect(small).toBeLessThan(30)
   })
 
   it('honours an explicit scale from the caller', () => {

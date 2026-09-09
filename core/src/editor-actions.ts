@@ -35,6 +35,7 @@ import {
   DEFAULT_CLIP_TRANSFORM,
   DEFAULT_CLIP_MASK,
   DEFAULT_CHROMA_KEY,
+  MAX_CLIP_VOLUME,
 } from './project-model'
 import { validateTimeline, setLastTimelineValidationError } from './validator'
 import { createTextClipWithPreset, applyTextPreset, applyTextAnimation } from './text-presets'
@@ -76,7 +77,7 @@ import {
 } from './editor-selectors'
 import { getEditorModel, updatedProject } from './editor-project-bridging'
 import { getEffectiveTimelineDimensions } from './video-resolution'
-import { clampClipSpeed } from './clip-speed'
+import { clampClipSpeed, mediaSecondsForTimelineSeconds } from './clip-speed'
 
 
 export interface InsertAssetsToTimelineParams {
@@ -1311,14 +1312,14 @@ export function splitClipsAtTime(state: EditorState, clipIds: string[], time: nu
       const firstHalf: TimelineClip = {
         ...clip,
         duration: splitPoint,
-        trimEnd: clip.trimEnd + (clip.duration - splitPoint),
+        trimEnd: clip.trimEnd + mediaSecondsForTimelineSeconds(clip.duration - splitPoint, clip.speed),
       }
       const secondHalf: TimelineClip = {
         ...clip,
         id: secondHalfId,
         startTime: clip.startTime + splitPoint,
         duration: clip.duration - splitPoint,
-        trimStart: clip.trimStart + splitPoint,
+        trimStart: clip.trimStart + mediaSecondsForTimelineSeconds(splitPoint, clip.speed),
       }
 
       newClips = newClips.map(candidate => candidate.id === splitId ? firstHalf : candidate).concat(secondHalf)
@@ -1342,7 +1343,7 @@ export function splitClipsAtTime(state: EditorState, clipIds: string[], time: nu
         const linkedFirstHalf: TimelineClip = {
           ...linkedClip,
           duration: linkedSplitPoint,
-          trimEnd: linkedClip.trimEnd + (linkedClip.duration - linkedSplitPoint),
+          trimEnd: linkedClip.trimEnd + mediaSecondsForTimelineSeconds(linkedClip.duration - linkedSplitPoint, linkedClip.speed),
           linkedClipIds: [firstHalfId],
         }
         const linkedSecondHalf: TimelineClip = {
@@ -1350,7 +1351,7 @@ export function splitClipsAtTime(state: EditorState, clipIds: string[], time: nu
           id: linkedSecondId,
           startTime: linkedClip.startTime + linkedSplitPoint,
           duration: linkedClip.duration - linkedSplitPoint,
-          trimStart: linkedClip.trimStart + linkedSplitPoint,
+          trimStart: linkedClip.trimStart + mediaSecondsForTimelineSeconds(linkedSplitPoint, linkedClip.speed),
           linkedClipIds: [secondHalfId],
         }
 
@@ -1540,7 +1541,11 @@ function resolveClipAudioTargetId(state: EditorState, clipId: string): string | 
 export function setClipAudioLevel(state: EditorState, clipId: string, volume: number): EditorState {
   const targetClipId = resolveClipAudioTargetId(state, clipId)
   if (!targetClipId) return state
-  const clampedVolume = Math.max(0, Math.min(1, volume))
+  // The ceiling is MAX_CLIP_VOLUME, not unity: the volume slider runs to 400%,
+  // preview lifts anything past 100% through a Web Audio gain node and export
+  // rides the peaks down with a look-ahead limiter. Clamping at 1 here meant
+  // the slider sprang back to 100% and a clip could never be made louder.
+  const clampedVolume = Math.max(0, Math.min(MAX_CLIP_VOLUME, volume))
   return updateClip(state, targetClipId, { volume: clampedVolume, muted: false })
 }
 
@@ -1845,6 +1850,31 @@ export function setSubtitleStyleField<K extends keyof SubtitleStyle>(
       [field]: value,
     },
   })
+}
+
+/**
+ * A new project takes its shape from the first video put into it.
+ *
+ * Until something is written here the preview falls back to the largest asset
+ * in the project, which means the canvas can flip shape later when a bigger
+ * clip is imported. Writing the size down on the first video settles it: the
+ * project is that video's shape, and Project Settings shows what it is.
+ *
+ * Deliberately narrow — a timeline that already has a size keeps it, and so
+ * does a project that already has another video in it.
+ */
+export function adoptTimelineSizeFromAsset(state: EditorState, asset: Asset): EditorState {
+  if (asset.type !== 'video' || !asset.width || !asset.height) return state
+
+  const timeline = selectActiveTimeline(state)
+  if (!timeline || timeline.width || timeline.height) return state
+
+  const hasOtherVideo = state.editorModel.assets.some(
+    candidate => candidate.type === 'video' && candidate.id !== asset.id,
+  )
+  if (hasOtherVideo) return state
+
+  return setTimelineSettings(state, timeline.id, { width: asset.width, height: asset.height })
 }
 
 export function addAssetToEditor(state: EditorState, asset: Asset): EditorState {
@@ -3092,7 +3122,7 @@ function defaultStickerScale(state: EditorState): number {
   if (!shortEdge || !Number.isFinite(shortEdge)) return DEFAULT_STICKER_SCALE
   // Clamped so an unusual frame size cannot produce a sticker too small to grab
   // by its handles, or one that fills the screen.
-  return Math.max(2, Math.min(50, (DEFAULT_STICKER_PIXELS / shortEdge) * 100))
+  return Math.max(2, Math.min(80, (DEFAULT_STICKER_PIXELS / shortEdge) * 100))
 }
 
 export function addStickerClip(state: EditorState, params: AddStickerClipParams): EditorState {
@@ -3156,6 +3186,9 @@ export function addStickerClip(state: EditorState, params: AddStickerClipParams)
     height: stickerHeight,
     duration,
     createdAt: Date.now(),
+    // The clip needs an asset, but the user never imported this file, so the
+    // media panel leaves it out.
+    source: 'sticker',
   }
 
   next = updateEditorModel(next, editorModel => ({
@@ -3692,7 +3725,7 @@ export function freezeFrame(state: EditorState, params: FreezeFrameParams): Edit
   const firstHalf: TimelineClip = {
     ...targetClip,
     duration: splitPoint,
-    trimEnd: targetClip.trimEnd + (targetClip.duration - splitPoint),
+    trimEnd: targetClip.trimEnd + mediaSecondsForTimelineSeconds(targetClip.duration - splitPoint, targetClip.speed),
   }
 
   const freezeClip: TimelineClip = {
@@ -3724,7 +3757,7 @@ export function freezeFrame(state: EditorState, params: FreezeFrameParams): Edit
     id: secondHalfId,
     startTime: targetClip.startTime + splitPoint + freezeDuration,
     duration: targetClip.duration - splitPoint,
-    trimStart: targetClip.trimStart + splitPoint,
+    trimStart: targetClip.trimStart + mediaSecondsForTimelineSeconds(splitPoint, targetClip.speed),
   }
 
   const rippleDelta = freezeDuration
@@ -3804,7 +3837,7 @@ export function createHighlightShort(
   if (!timeline || !sourceClip) return state
 
   const clipStart = sourceClip.startTime
-  const trimStart = sourceClip.trimStart + (params.startTime - clipStart)
+  const trimStart = sourceClip.trimStart + mediaSecondsForTimelineSeconds(params.startTime - clipStart, sourceClip.speed)
   const duration = params.endTime - params.startTime
   const dims = params.targetDimensions || { width: 1080, height: 1920 }
 

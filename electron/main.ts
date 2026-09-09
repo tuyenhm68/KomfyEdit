@@ -30,6 +30,14 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
+  // Windows groups taskbar buttons — and picks the taskbar icon — by
+  // AppUserModelID. Without one, an unpackaged run inherits electron.exe's
+  // identity and Windows draws Electron's default icon instead of the
+  // BrowserWindow icon. Must match `appId` in electron-builder.yml.
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.komfyedit.app')
+  }
+
   initSessionLog()
   logAppVersion()
 

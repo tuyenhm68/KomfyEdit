@@ -217,8 +217,11 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
   }, [actions])
   const duplicateClip = useCallback((clipId: string) => { actions.duplicateClips([clipId]) }, [actions])
   const splitClipAtPlayhead = useCallback((clipId: string, atTime?: number, batchClipIds?: string[]) => {
-    actions.splitClipsAtTime(batchClipIds ?? [clipId], atTime ?? getCurrentTime())
-  }, [actions, getCurrentTime])
+    // While playing, the store's currentTime lags the drawn playhead — cut
+    // where the red line actually is.
+    const playhead = isPlayingRef.current ? playbackTimeRef.current : getCurrentTime()
+    actions.splitClipsAtTime(batchClipIds ?? [clipId], atTime ?? playhead)
+  }, [actions, getCurrentTime, playbackTimeRef])
   const updateClip = useCallback((id: string, patch: Partial<TimelineClip>) => { actions.updateClip(id, patch) }, [actions])
   const setClipSpeed = useCallback((id: string, speed: number, duration?: number) => {
     actions.setClipSpeed(id, speed, duration)
