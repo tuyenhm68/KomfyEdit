@@ -136,6 +136,7 @@ export function Home() {
   const [newProjectName, setNewProjectName] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [appVersion, setAppVersion] = useState<string | null>(null)
   const migrationStartedRef = useRef(false)
 
   useEffect(() => {
@@ -143,6 +144,21 @@ export function Home() {
     migrationStartedRef.current = true
     void migrateProjects()
   }, [migrateProjects, migrationStatus.status])
+
+  // The main process is the only one that knows the packaged version, so this
+  // has to come over IPC. Stays null outside Electron and on failure, and the
+  // heading simply renders without it.
+  useEffect(() => {
+    let cancelled = false
+    void window.electronAPI?.getAppInfo()
+      .then(info => {
+        if (!cancelled && info?.version) setAppVersion(info.version)
+      })
+      .catch(() => {
+        // Nothing to do: the version is decoration, not a feature.
+      })
+    return () => { cancelled = true }
+  }, [])
 
   const projects = useMemo(() => (
     projectIds
@@ -263,7 +279,14 @@ export function Home() {
           <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/40 to-transparent" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20" />
           <div className="absolute bottom-4 left-8 z-10">
-            <h1 className="text-2xl font-bold text-white tracking-tight mb-1 drop-shadow-md">KomfyEdit</h1>
+            <h1 className="text-2xl font-bold text-white tracking-tight mb-1 drop-shadow-md">
+              KomfyEdit{' '}
+              {appVersion && (
+                <span className="ml-2 align-middle text-sm font-medium text-zinc-300/90 drop-shadow-sm">
+                  v{appVersion}
+                </span>
+              )}
+            </h1>
             <p className="text-xs sm:text-sm text-zinc-300 drop-shadow-sm">{t('home.tagline')}</p>
           </div>
         </div>
