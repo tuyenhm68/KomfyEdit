@@ -16,6 +16,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
         version: 1.30.0(zod@4.3.6)
+      '@resvg/resvg-js':
+        specifier: 2.6.2
+        version: 2.6.2
       '@xmldom/xmldom':
         specifier: 0.9.12
         version: 0.9.12
@@ -56,9 +59,6 @@ importers:
         specifier: 5.0.12
         version: 5.0.12(@types/react@18.3.27)(react@18.3.1)(use-sync-external-store@1.6.0(react@18.3.1))
     devDependencies:
-      '@resvg/resvg-js':
-        specifier: ^2.6.2
-        version: 2.6.2
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
@@ -113,6 +113,22 @@ importers:
       vitest:
         specifier: 4.1.11
         version: 4.1.11(@types/node@22.19.15)(happy-dom@20.11.12)(vite@7.3.1(@types/node@22.19.15)(jiti@1.21.7)(tsx@4.23.12))
+    optionalDependencies:
+      '@resvg/resvg-js-darwin-arm64':
+        specifier: 2.6.2
+        version: 2.6.2
+      '@resvg/resvg-js-darwin-x64':
+        specifier: 2.6.2
+        version: 2.6.2
+      '@resvg/resvg-js-linux-arm64-gnu':
+        specifier: 2.6.2
+        version: 2.6.2
+      '@resvg/resvg-js-linux-x64-gnu':
+        specifier: 2.6.2
+        version: 2.6.2
+      '@resvg/resvg-js-win32-x64-msvc':
+        specifier: 2.6.2
+        version: 2.6.2
 
   core:
     dependencies:

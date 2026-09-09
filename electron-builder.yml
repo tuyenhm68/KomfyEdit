@@ -31,6 +31,10 @@ files:
 asarUnpack:
   # ffmpeg must stay a real file on disk so it can be spawned as a child process.
   - node_modules/ffmpeg-static/**
+  # @resvg/resvg-js reaches its native binding with a plain require of the
+  # per-platform package (@resvg/resvg-js-win32-x64-msvc and friends). A .node
+  # cannot be loaded from inside an asar, so these have to stay unpacked.
+  - node_modules/@resvg/**
 
 extraResources:
   - from: resources/luts
