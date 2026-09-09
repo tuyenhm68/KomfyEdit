@@ -150,6 +150,14 @@ jobs:
       - name: Build renderer and main process
         run: pnpm run build:frontend
 
+      - name: Clean conflicting release assets
+        if: github.ref_type == 'tag'
+        run: node scripts/clean-platform-release-assets.cjs "${{ matrix.name }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
       # `--publish always` only on a tag. A manual run must never upload: with
       # no tag there is no release to attach to, and electron-builder would
       # either fail or invent one from package.json.
