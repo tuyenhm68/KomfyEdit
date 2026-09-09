@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─────────────────────────────────────────
+   THEME — edit this block to retheme the app
+   Values are RGB channels: R G B
+   ───────────────────────────────────────── */
+:root {
+  /* Accent color (used for buttons, progress, highlights) */
+  --accent: 34 221 221;       /* #22DDDD — KomfyEdit cyan */
+  --accent-dark: 16 191 191;  /* #10BFBF — darker shade for hover states */
+
+  /* Surface colors */
+  --bg: 19 19 21;             /* #131315 — main app background */
+  --surface: 27 27 30;        /* #1B1B1E — panels, cards */
+  --surface-raised: 38 38 42; /* #26262A — inputs, hover states */
+  --border-color: 52 52 58;   /* #34343A — dividers, borders */
+
+  /* Text */
+  --text: 237 237 241;
+  --text-muted: 154 154 164;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3a3a42;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4c4c56;
+}
+
+/* ── Editor chrome helpers ──
+   Flat, tightly-spaced controls: 28px icon buttons that only
+   reveal their surface on hover, and pill-shaped nav rows in the left column.
+
+   These live in @layer components so a utility class on the element still
+   wins — otherwise a plain `.editor-range { width: 100% }` would beat `w-24` and
+   stretch every slider to fill its flex row. */
+@layer components {
+  /* Editor surfaces.
+
+     Floats each region as its own card on a near-black ground rather
+     than butting them together with hairlines: the gap does the separating,
+     which reads at a glance and survives a resize without the borders
+     doubling up. The wrapper owns the rounding and clips whatever is inside,
+     so panels keep their own background. */
+  /* The tab rail pages with chevrons; a scrollbar under it would eat 8px of
+     a 46px row and look like a stray line. */
+  .editor-no-scrollbar,
+  .cc-no-scrollbar {
+    scrollbar-width: none;
+  }
+  .editor-no-scrollbar::-webkit-scrollbar,
+  .cc-no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .editor-panel,
+  .cc-panel {
+    @apply flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg
+           border border-zinc-800 bg-zinc-950;
+  }
+  /* Frameless window: the title bar doubles as the OS drag strip, so its
+     interactive children have to opt back out. */
+  .app-drag {
+    -webkit-app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+  .editor-icon-btn,
+  .cc-icon-btn {
+    @apply flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[4px]
+           text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white
+           disabled:pointer-events-none disabled:opacity-35;
+  }
+  .editor-icon-btn-on,
+  .cc-icon-btn-on {
+    @apply bg-zinc-800 text-accent;
+  }
+  .editor-nav-pill,
+  .cc-nav-pill {
+    @apply flex w-full items-center justify-between rounded-[4px] bg-zinc-800/70 px-3 py-[7px]
+           text-left text-[12px] text-zinc-300 transition-colors hover:bg-zinc-700/70;
+  }
+  .editor-nav-pill-on,
+  .cc-nav-pill-on {
+    @apply text-accent;
+  }
+  /* Range inputs (speed, zoom, font size) — draws a hairline track with
+     a small white knob rather than the chunky platform default. */
+  .editor-range,
+  .cc-range {
+    @apply h-1 flex-shrink-0 cursor-pointer appearance-none rounded-full bg-zinc-700;
+  }
+}
+.editor-range::-webkit-slider-thumb,
+.cc-range::-webkit-slider-thumb {
+  @apply h-3 w-3 appearance-none rounded-full bg-white;
+}
+
+/* Drag and drop styling */
+.dropzone-active {
+  border-color: rgb(var(--accent)) !important;
+  background-color: rgb(var(--accent) / 0.1) !important;
+}

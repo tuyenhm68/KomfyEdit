@@ -1,0 +1,125 @@
+name: Release
+
+# Tag-driven. `git tag v1.3.0 && git push origin v1.3.0` builds the installers
+# on all three platforms and uploads them, together with the latest*.yml files
+# electron-updater needs, to a draft GitHub Release. Publish the draft by hand
+# once the artifacts look right — a bad release that is already public cannot
+# be taken back from clients that have started downloading it.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # A tag that disagrees with package.json produces installers whose
+      # auto-update metadata points at a version nobody can find. Catch it here
+      # rather than after three platform builds have burned CI minutes.
+      - name: Tag must match package.json version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG" >&2
+            exit 1
+          fi
+          echo "Releasing version $PKG"
+
+      - name: TypeScript type check
+        run: pnpm run typecheck
+
+      - name: Run unit tests
+        run: pnpm run test:run
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            ebArgs: --x64
+          # One mac job for both architectures on purpose: macOS shares a single
+          # latest-mac.yml, and only a run that packs both writes both zips into
+          # it. The x64 app is cross-packed here — scripts/ffmpeg-per-arch.cjs
+          # swaps in the Intel ffmpeg, since ffmpeg-static only ever installs
+          # the build machine's own binary.
+          - name: macos-arm64-and-x64
+            os: macos-latest
+            ebArgs: --arm64 --x64
+          - name: linux-x64
+            os: ubuntu-latest
+            ebArgs: --x64
+          # Linux is the opposite case: electron-builder writes a separate
+          # latest-linux-arm64.yml, so a native arm64 runner is both cheaper and
+          # safer than cross-packing.
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            ebArgs: --arm64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # electron-builder publishes to the Release for the current tag and
+      # generates latest.yml / latest-mac.yml / latest-linux.yml alongside the
+      # installers. Nothing is signed yet, so Windows shows a SmartScreen
+      # warning and macOS needs a right-click Open on first launch.
+      - name: Build renderer and main process
+        run: pnpm run build:frontend
+
+      - name: Package and publish
+        run: pnpm exec electron-builder --publish always ${{ matrix.ebArgs }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Explicitly off: signing without credentials fails the mac build
+          # instead of quietly producing an unsigned app.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload artifacts for inspection
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: komfyedit-${{ matrix.name }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/latest*.yml

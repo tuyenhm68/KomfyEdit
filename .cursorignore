@@ -1,0 +1,32 @@
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+dist-electron
+release
+build
+
+# Binary/media files
+*.log
+*.mp4
+*.zip
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.woff
+*.woff2
+*.ttf
+*.eot
+*.ico
+
+# Package lock files (huge, not useful for AI)
+package-lock.json
+
+# Git internals
+.git
+
+# Electron build resources
+resources

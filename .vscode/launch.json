@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach: Electron Main",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/dist-electron/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
+      "timeout": 30000
+    },
+    {
+      "name": "Attach: Renderer",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true,
+      "urlFilter": "http://localhost:*/*",
+      "timeout": 30000
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug",
+      "configurations": [
+        "Attach: Electron Main",
+        "Attach: Renderer"
+      ],
+      "preLaunchTask": "dev:debug",
+      "stopAll": true
+    }
+  ]
+}

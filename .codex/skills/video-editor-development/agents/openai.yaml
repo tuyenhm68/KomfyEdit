@@ -1,0 +1,4 @@
+interface:
+  display_name: "KomfyEdit Video Editor Development"
+  short_description: "Guidance for editing the KomfyEdit video editor safely"
+  default_prompt: "Use $video-editor-development to implement or review changes in the KomfyEdit video editor."

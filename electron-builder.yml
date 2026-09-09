@@ -1,0 +1,109 @@
+appId: com.komfyedit.app
+productName: KomfyEdit
+copyright: Copyright © 2026 KomfyEdit
+
+directories:
+  output: release
+  buildResources: resources
+
+# Auto-update source. electron-builder writes this block into app-update.yml
+# inside the packaged app, which is the only place electron-updater reads it
+# from, and uploads the artifacts plus latest*.yml to the matching GitHub
+# Release. Public repo, so no token is needed by the client.
+publish:
+  provider: github
+  owner: tuyenhm68
+  repo: KomfyEdit
+
+# ffmpeg-static installs one binary for the build machine's architecture, so a
+# run that packs two of them (the mac release does) needs the right one swapped
+# into each app. See the note at the top of the script.
+afterPack: scripts/ffmpeg-per-arch.cjs
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+  - LICENSE.txt
+  - NOTICES.md
+  - "!**/*.map"
+
+asarUnpack:
+  # ffmpeg must stay a real file on disk so it can be spawned as a child process.
+  - node_modules/ffmpeg-static/**
+
+extraResources:
+  - from: resources/luts
+    to: luts
+  - from: resources/stickers
+    to: stickers
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.ico
+  # No version in the name, so that the permanent
+  # /releases/latest/download/KomfyEdit-Setup.exe link keeps working.
+  artifactName: ${productName}-Setup.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  installerHeaderIcon: resources/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: KomfyEdit
+
+mac:
+  hardenedRuntime: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  # Both architectures must come out of ONE electron-builder run: macOS has a
+  # single latest-mac.yml for the whole platform, and MacUpdater picks the arm64
+  # or the x64 zip out of its file list. Two separate jobs would each write that
+  # file and the second would erase the first architecture's update channel.
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  icon: resources/icon.icns
+  category: public.app-category.video
+  artifactName: ${productName}-${arch}.${ext}
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: resources/icons
+  category: Video
+  artifactName: ${productName}-${arch}.${ext}
+
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0

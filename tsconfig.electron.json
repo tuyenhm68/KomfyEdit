@@ -1,0 +1,29 @@
+{
+  // Type-checking only for the main process.
+  //
+  // Kept separate from tsconfig.node.json on purpose: that one is a composite
+  // project referenced by tsconfig.json, so widening its `include` makes the
+  // root check demand built .d.ts outputs (TS6305). This config emits nothing
+  // and is referenced by nothing, so it can see everything the main process
+  // actually imports — including core/, which it reaches by relative path.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["core/src/*"],
+      "@komfyedit/core": ["core/src/index.ts"],
+      "@komfyedit/core/*": ["core/src/*"]
+    }
+  },
+  "include": ["electron/**/*.ts", "core/src/**/*.ts", "shared/**/*.ts"]
+}

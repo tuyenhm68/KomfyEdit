@@ -1,0 +1,7 @@
+---
+description: Automated workflow to detect and cut silence/pauses from timeline audio or speech using KomfyEdit observe, edit, preview, and QC tools.
+globs: ["**/*"]
+alwaysApply: false
+---
+
+@../../docs/skills/cut-silence.md
