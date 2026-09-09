@@ -100,3 +100,8 @@ coverage/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Local release helper: contains no secrets, but it is a personal workflow
+# tool, not part of the project's public release process (which is documented
+# in docs/en/developer-guide/06-releasing-and-updates.md).
+/publish-release.ps1

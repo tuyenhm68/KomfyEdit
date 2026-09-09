@@ -26,6 +26,14 @@ git push origin main --tags
 | **build** | Đóng gói song song trên bốn runner (xem bảng bên dưới) |
 | **publish** | Đẩy toàn bộ installer cùng các file manifest `latest*.yml` lên một GitHub Release ở dạng **draft** |
 
+### Chạy thử (dry run)
+
+Kích hoạt workflow bằng tay (**Actions → Release → Run workflow**) sẽ dựng đủ mọi nền tảng nhưng **không phát hành gì cả**. Installer được đính kèm vào chính lần chạy đó, nên bạn tải về kiểm tra được mà không cần tạo phiên bản mới hay đụng tới trang Releases. Dùng cách này để kiểm chứng một thay đổi về đóng gói trước khi gắn tag.
+
+Bước đối chiếu tag với version được bỏ qua khi chạy tay — ngoài lần đẩy tag, `GITHUB_REF_NAME` là tên branch, không bao giờ giống một số phiên bản.
+
+---
+
 Draft **không** tự công bố. Vào tab Releases, kiểm tra đủ artifact rồi bấm **Publish release** — client chỉ thấy bản mới sau bước này. Một bản lỗi đã public thì không rút lại được khỏi những máy đã bắt đầu tải.
 
 ---

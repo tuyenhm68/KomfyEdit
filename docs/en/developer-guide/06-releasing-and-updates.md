@@ -26,6 +26,14 @@ Pushing a `v*` tag triggers [`.github/workflows/release.yml`](../../../.github/w
 | **build** | Packages on four runners in parallel (see the matrix below) |
 | **publish** | Uploads every installer plus the `latest*.yml` update manifests to a **draft** GitHub Release |
 
+### Dry Runs
+
+Triggering the workflow manually (**Actions → Release → Run workflow**) builds every platform but publishes nothing. The installers are attached to the workflow run itself, so you can download and test them without minting a version or touching the Releases page. Use this to validate a packaging change before tagging.
+
+The tag/version check is skipped on a manual run — outside a tag push `GITHUB_REF_NAME` is the branch name, which will never look like a version.
+
+---
+
 The draft is **not** published automatically. Open the Releases tab, confirm every artifact is present, then click **Publish release** — clients only see the new version after that. A bad release that is already public cannot be recalled from machines that have started downloading it.
 
 ---

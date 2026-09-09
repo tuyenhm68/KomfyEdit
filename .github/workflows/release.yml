@@ -1,10 +1,18 @@
 name: Release
 
-# Tag-driven. `git tag v1.3.0 && git push origin v1.3.0` builds the installers
-# on all three platforms and uploads them, together with the latest*.yml files
-# electron-updater needs, to a draft GitHub Release. Publish the draft by hand
-# once the artifacts look right — a bad release that is already public cannot
-# be taken back from clients that have started downloading it.
+# Two ways in, and they do different things:
+#
+#   Push a v* tag  — the real release. Builds installers on every platform and
+#                    uploads them, with the latest*.yml files electron-updater
+#                    needs, to a DRAFT GitHub Release. Publish the draft by hand
+#                    once the artifacts look right: a bad release that is
+#                    already public cannot be taken back from clients that have
+#                    started downloading it.
+#
+#   Run it by hand — a dry run. Same build on every platform, but nothing is
+#   (workflow_    ) published anywhere; the installers land in the run's
+#   (dispatch     ) artifacts so you can download and test them. Use this to
+#                   check a packaging change without minting a version.
 on:
   push:
     tags:
@@ -37,8 +45,11 @@ jobs:
 
       # A tag that disagrees with package.json produces installers whose
       # auto-update metadata points at a version nobody can find. Catch it here
-      # rather than after three platform builds have burned CI minutes.
+      # rather than after four platform builds have burned CI minutes.
+      # Only meaningful for a tag push: on workflow_dispatch GITHUB_REF_NAME is
+      # the branch name, which is never going to look like a version.
       - name: Tag must match package.json version
+        if: github.ref_type == 'tag'
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           PKG=$(node -p "require('./package.json').version")
@@ -47,6 +58,12 @@ jobs:
             exit 1
           fi
           echo "Releasing version $PKG"
+
+      - name: Report dry run
+        if: github.ref_type != 'tag'
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          echo "Dry run from ${GITHUB_REF_NAME} — building version $PKG without publishing."
 
       - name: TypeScript type check
         run: pnpm run typecheck
@@ -102,8 +119,11 @@ jobs:
       - name: Build renderer and main process
         run: pnpm run build:frontend
 
-      - name: Package and publish
-        run: pnpm exec electron-builder --publish always ${{ matrix.ebArgs }}
+      # `--publish always` only on a tag. A manual run must never upload: with
+      # no tag there is no release to attach to, and electron-builder would
+      # either fail or invent one from package.json.
+      - name: Package${{ github.ref_type == 'tag' && ' and publish' || ' (dry run)' }}
+        run: pnpm exec electron-builder --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }} ${{ matrix.ebArgs }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Explicitly off: signing without credentials fails the mac build
