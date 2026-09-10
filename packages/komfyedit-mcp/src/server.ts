@@ -444,7 +444,7 @@ export const READ_ONLY_TOOLS: Tool[] = [
 export const EDIT_TOOLS: Tool[] = [
   {
     name: 'ask_confirm',
-    description: 'Ask the user to confirm before an irreversible or ambiguous edit, and BLOCK until they answer in the KomfyEdit panel. Returns the id of the button they pressed. Use it in place of asking in chat: a chat question is only read after the run has already finished.',
+    description: 'Ask the user to confirm before an irreversible or ambiguous edit, and BLOCK until they answer in the KomfyEdit panel. Returns the id of the button they pressed, plus the item numbers still ticked when the list was selectable. Use it in place of asking in chat: a chat question is only read after the run has already finished.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -465,6 +465,8 @@ export const EDIT_TOOLS: Tool[] = [
               label: { type: 'string', description: 'Short primary text.' },
               detail: { type: 'string', description: 'Secondary text, e.g. a duration or timecode.' },
               highlight: { type: 'boolean', description: 'True for entries the action will actually change.' },
+              startSec: { type: 'number', description: 'Where this entry sits on the timeline, in seconds. Pass it and the row becomes clickable: the playhead jumps there, so the user can watch the spot before deciding.' },
+              endSec: { type: 'number', description: 'Where the entry ends, in seconds.' },
             },
             required: ['label'],
           },
@@ -784,6 +786,7 @@ export class KomfyEditMcpServer {
               items: toolArgs.items,
               actions: toolArgs.actions,
               taskIndex: toolArgs.taskIndex,
+              selectable: toolArgs.selectable,
             })
 
             // No app on the other end (offline run, or the panel is closed):
@@ -825,10 +828,29 @@ export class KomfyEditMcpServer {
               }
             }
 
+            // A card with checkboxes answers a narrower question than "yes":
+            // it says which entries survived. Report the numbers the user left
+            // ticked so the agent acts on those and leaves the rest alone.
+            const selected = result.selectedItemNumbers
+            const itemCount = Array.isArray(toolArgs.items) ? toolArgs.items.length : 0
+
             return {
               content: [{
                 type: 'text',
-                text: JSON.stringify({ answered: true, action: result.actionId }, null, 2),
+                text: JSON.stringify({
+                  answered: true,
+                  action: result.actionId,
+                  ...(selected
+                    ? {
+                        selectedItemNumbers: selected,
+                        deselectedItemNumbers: Array.from({ length: itemCount }, (_, index) => index + 1)
+                          .filter(number => !selected.includes(number)),
+                        hint: selected.length === 0
+                          ? 'The user unticked everything. Change nothing.'
+                          : 'Act only on selectedItemNumbers; the user removed the rest from the list.',
+                      }
+                    : {}),
+                }, null, 2),
               }],
             }
           }

@@ -139,6 +139,11 @@ export interface LiveBridgeConfirmResult {
   dismissed?: boolean
   error?: string
   timedOut?: boolean
+  /**
+   * Item numbers (1-based) the user left ticked. Present only for a card that
+   * offered checkboxes; the agent must act on these and nothing else.
+   */
+  selectedItemNumbers?: number[]
 }
 
 /**

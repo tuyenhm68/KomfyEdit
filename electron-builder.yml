@@ -20,10 +20,9 @@ publish:
   # wording exactly as it is.
   releaseType: draft
 
-# ffmpeg-static installs one binary for the build machine's architecture, so a
-# run that packs two of them (the mac release does) needs the right one swapped
-# into each app. See the note at the top of the script.
-afterPack: scripts/ffmpeg-per-arch.cjs
+# Runs the per-architecture ffmpeg swap and then checks the packed app for the
+# things that fail silently — today, the window icon. See the scripts.
+afterPack: scripts/after-pack.cjs
 
 files:
   - dist/**/*
@@ -46,6 +45,14 @@ extraResources:
     to: luts
   - from: resources/stickers
     to: stickers
+  # createWindow() reads the window icon at runtime from <installdir>/resources.
+  # The .ico under `directories.buildResources` is only an input to the
+  # installer and the exe's own resources — nothing copies it into the app — so
+  # a packaged run found no icon file and left the window without one.
+  - from: resources/icon.ico
+    to: icon.ico
+  - from: resources/icon.png
+    to: icon.png
 
 win:
   target:

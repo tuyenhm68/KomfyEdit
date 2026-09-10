@@ -146,15 +146,32 @@ export function EditPilotPanel({ backend = defaultBackend, projectId = null }: E
     })
   }, [projectId])
 
-  const answerConfirm = useCallback((request: EditPilotConfirmRequest, action: EditPilotConfirmAction) => {
+  const answerConfirm = useCallback((
+    request: EditPilotConfirmRequest,
+    action: EditPilotConfirmAction,
+    selectedItemNumbers?: number[],
+  ) => {
     setMessages(prev => prev.map(m => (
-      m.confirm?.requestId === request.requestId ? { ...m, answeredActionId: action.id } : m
+      m.confirm?.requestId === request.requestId
+        ? { ...m, answeredActionId: action.id, answeredItemNumbers: selectedItemNumbers }
+        : m
     )))
     void window.electronAPI?.editPilotRespondLiveConfirm?.({
       requestId: request.requestId,
       actionId: action.id,
+      ...(selectedItemNumbers ? { selectedItemNumbers } : {}),
     })
   }, [])
+
+  /**
+   * Jump to a spot a confirmation item points at. The playhead is the whole
+   * point of the card being clickable: a pause is easier to judge by watching
+   * it than by reading its timecode.
+   */
+  const seekToConfirmItem = useCallback((timeSec: number) => {
+    actions.pause()
+    actions.setCurrentTime(Math.max(0, timeSec))
+  }, [actions])
 
   /** The one question still blocking the run, if any. */
   const pendingConfirm = useMemo(() => {
@@ -300,8 +317,10 @@ export function EditPilotPanel({ backend = defaultBackend, projectId = null }: E
               <EditPilotConfirmCard
                 request={message.confirm}
                 answeredActionId={message.answeredActionId}
+                answeredItemNumbers={message.answeredItemNumbers}
                 expired={message.expired}
-                onAnswer={action => answerConfirm(message.confirm!, action)}
+                onSeek={seekToConfirmItem}
+                onAnswer={(action, selectedItemNumbers) => answerConfirm(message.confirm!, action, selectedItemNumbers)}
               />
             </div>
           ) : message.role === 'user' ? (

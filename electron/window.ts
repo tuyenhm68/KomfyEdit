@@ -17,15 +17,25 @@ export function createWindow(): BrowserWindow {
     ? path.join(getCurrentDir(), 'dist-electron', 'preload.js')
     : path.join(app.getAppPath(), 'dist-electron', 'preload.js')
 
-  // App icon — .ico on Windows, .png elsewhere. getCurrentDir() is the cwd in
-  // dev, so also look next to the app path in case Electron was started from
-  // somewhere else, and fall back to the .png when the .ico fails to decode.
+  // App icon — .ico on Windows, .png elsewhere, and the .png as a fallback when
+  // the .ico will not decode.
+  //
+  // Where it lives depends on how the app was started, and getting this wrong
+  // is silent: a missing file leaves the window with no icon at all. In dev the
+  // project root is the cwd; in a packaged app the file is copied to
+  // `process.resourcesPath` by `extraResources`, which is also
+  // `<installdir>/resources` — the app path (inside the asar) is checked last,
+  // for a layout that bundles it instead.
   const iconNames = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png']
-  const iconRoots = [getCurrentDir(), app.getAppPath()]
+  const iconDirectories = [
+    path.join(getCurrentDir(), 'resources'),
+    ...(process.resourcesPath ? [process.resourcesPath] : []),
+    path.join(app.getAppPath(), 'resources'),
+  ]
   let appIcon: Electron.NativeImage | undefined
-  for (const root of iconRoots) {
+  for (const directory of iconDirectories) {
     for (const name of iconNames) {
-      const iconPath = path.join(root, 'resources', name)
+      const iconPath = path.join(directory, name)
       if (!fs.existsSync(iconPath)) continue
       const candidate = nativeImage.createFromPath(iconPath)
       if (candidate.isEmpty()) {
@@ -38,7 +48,14 @@ export function createWindow(): BrowserWindow {
     }
     if (appIcon) break
   }
-  if (!appIcon) logger.warn('[icon] No app icon found; using the Electron default')
+  if (!appIcon) {
+    // Loud on purpose. A window with no icon does not look broken from the
+    // inside — it just quietly wears Electron's logo on the taskbar, which is
+    // how this shipped once already. The packaged build is guarded by
+    // scripts/verify-packed-icon.cjs; this is the same alarm for a dev run.
+    logger.error(`[icon] No app icon found in: ${iconDirectories.join(' | ')}`)
+    console.error(`[icon] No app icon found in: ${iconDirectories.join(' | ')}`)
+  }
 
   mainWindow = new BrowserWindow({
     width: 1400,

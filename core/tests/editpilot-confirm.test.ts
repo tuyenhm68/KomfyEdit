@@ -72,4 +72,63 @@ describe('normalizeConfirmRequest', () => {
     const request = normalizeConfirmRequest({ requestId: 'req_7', title: 'Xoá', items: [] })
     expect(request.items).toBeUndefined()
   })
+
+  /**
+   * A range the user can jump to is a range they can judge, and a list they can
+   * strike entries off is an answer narrower than yes. Both hang off the item
+   * carrying a timeline position.
+   */
+  it('keeps the timeline position an item points at', () => {
+    const request = normalizeConfirmRequest({
+      requestId: 'req_seek',
+      title: 'Cắt 2 khoảng lặng',
+      items: [
+        { label: '1. 00:16 - 00:18', detail: '2,4 giây', startSec: 16.1, endSec: 18.5 },
+        { label: '2. 00:29 - 00:31', detail: '2,7 giây', startSec: 29.1, endSec: 31.8 },
+      ],
+    })
+
+    expect(editPilotConfirmRequestSchema.safeParse(request).success).toBe(true)
+    expect(request.items?.[0].startSec).toBe(16.1)
+    expect(request.items?.[1].endSec).toBe(31.8)
+  })
+
+  it('makes a list of timeline ranges tickable without being asked', () => {
+    const request = normalizeConfirmRequest({
+      requestId: 'req_sel',
+      title: 'Cắt 2 khoảng lặng',
+      items: [
+        { label: '1', startSec: 16.1 },
+        { label: '2', startSec: 29.1 },
+      ],
+    })
+    expect(request.selectable).toBe(true)
+  })
+
+  it('leaves a plain question alone — nothing to tick off a yes/no', () => {
+    const request = normalizeConfirmRequest({
+      requestId: 'req_plain',
+      title: 'Đổi khung hình sang 9:16?',
+      items: [{ label: 'Timeline 1' }],
+    })
+    expect(request.selectable).toBeUndefined()
+  })
+
+  it('lets the agent overrule the guess in either direction', () => {
+    const off = normalizeConfirmRequest({
+      requestId: 'req_off',
+      title: 'x',
+      items: [{ label: '1', startSec: 1 }],
+      selectable: false,
+    })
+    expect(off.selectable).toBeUndefined()
+
+    const on = normalizeConfirmRequest({
+      requestId: 'req_on',
+      title: 'x',
+      items: [{ label: 'Clip A' }, { label: 'Clip B' }],
+      selectable: true,
+    })
+    expect(on.selectable).toBe(true)
+  })
 })

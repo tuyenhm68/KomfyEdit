@@ -21,6 +21,14 @@ export const editPilotConfirmItemSchema = z.object({
   detail: z.string().optional(),
   /** Draws the eye to items the action will actually touch. */
   highlight: z.boolean().optional(),
+  /**
+   * Where on the timeline this item is, in seconds. A range the user can see
+   * for themselves is a range they can judge: given this, the card makes the
+   * row clickable and moves the playhead there, so "is that pause really dead
+   * air?" is answered by looking rather than by trusting the list.
+   */
+  startSec: z.number().nonnegative().optional(),
+  endSec: z.number().nonnegative().optional(),
 })
 
 export type EditPilotConfirmItem = z.infer<typeof editPilotConfirmItemSchema>
@@ -44,6 +52,12 @@ export const editPilotConfirmRequestSchema = z.object({
   taskIndex: z.number().int().positive().optional(),
   /** Truncated count, when the agent listed more than the panel will draw. */
   omittedItemCount: z.number().int().nonnegative().optional(),
+  /**
+   * Whether the user may strike items off the list before confirming. True for
+   * a list of things about to be removed — the answer then carries only what
+   * survived the ticking, and the agent acts on that subset alone.
+   */
+  selectable: z.boolean().optional(),
 })
 
 export type EditPilotConfirmRequest = z.infer<typeof editPilotConfirmRequestSchema>
@@ -55,6 +69,12 @@ export const editPilotConfirmAnswerSchema = z.object({
   actionId: z.string().optional(),
   /** The panel closed or the run was stopped before an answer came. */
   dismissed: z.boolean().optional(),
+  /**
+   * Positions (1-based, matching what the card numbered) of the items still
+   * ticked when the button was pressed. Absent when the question was not
+   * selectable, which means "all of them".
+   */
+  selectedItemNumbers: z.array(z.number().int().positive()).optional(),
 })
 
 export type EditPilotConfirmAnswer = z.infer<typeof editPilotConfirmAnswerSchema>
@@ -78,6 +98,7 @@ export interface NormalizeConfirmInput {
   items?: unknown
   actions?: unknown
   taskIndex?: unknown
+  selectable?: unknown
 }
 
 /**
@@ -113,14 +134,24 @@ export function normalizeConfirmRequest(input: NormalizeConfirmInput): EditPilot
     ? input.taskIndex
     : undefined
 
+  // Items that carry a timeline position are, by their nature, a list of
+  // places about to be changed — so they are tickable unless the agent says
+  // otherwise. Asking every caller to remember one more flag is how the
+  // feature ends up missing from the one question that needed it.
+  const shownItems = items.slice(0, MAX_CONFIRM_ITEMS)
+  const selectable = typeof input.selectable === 'boolean'
+    ? input.selectable
+    : shownItems.length > 0 && shownItems.every(item => typeof item.startSec === 'number')
+
   return {
     requestId: input.requestId,
     title,
     ...(message ? { message } : {}),
-    ...(items.length > 0 ? { items: items.slice(0, MAX_CONFIRM_ITEMS) } : {}),
+    ...(shownItems.length > 0 ? { items: shownItems } : {}),
     ...(items.length > MAX_CONFIRM_ITEMS ? { omittedItemCount: items.length - MAX_CONFIRM_ITEMS } : {}),
     actions: actions.length > 0 ? actions : DEFAULT_CONFIRM_ACTIONS,
     ...(taskIndex ? { taskIndex } : {}),
+    ...(selectable && shownItems.length > 0 ? { selectable: true } : {}),
   }
 }
 

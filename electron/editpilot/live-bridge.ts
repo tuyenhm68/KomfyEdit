@@ -25,6 +25,8 @@ export interface LiveConfirmResponse {
   /** The button the user pressed, absent when the card was dismissed. */
   actionId?: string
   dismissed?: boolean
+  /** Item numbers still ticked, for a card the user could strike items off. */
+  selectedItemNumbers?: number[]
 }
 
 interface PendingRequest {

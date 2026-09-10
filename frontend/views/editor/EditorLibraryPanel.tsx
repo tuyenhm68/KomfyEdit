@@ -23,7 +23,8 @@ import { EFFECT_DEFINITIONS } from '../../types/project'
 import type { Asset, EffectType } from '../../types/project-model'
 import { TEXT_PRESETS, TEXT_ANIMATIONS, SUBTITLE_PRESETS, getSubtitlePreset } from '@core/text-presets'
 import { STICKER_DEFINITIONS, STICKER_CATEGORIES, type StickerCategory } from '@core/stickers'
-import { whisperSegmentsToSrtCues } from '@core/whisper-types'
+import { selectCaptionSourceClips, whisperSegmentsToSrtCues } from '@core/whisper-types'
+import type { SrtCue } from '@core/srt'
 import { makeId } from '@core/id-generator'
 import type { HighlightCandidate } from '@core/auto-highlight'
 import { buildHighlightEditPatch } from '@core/auto-highlight'
@@ -396,46 +397,46 @@ function AutoCaptionsPanel() {
   const [selectedLanguage, setSelectedLanguage] = useState<string>(settings.whisperLanguage || '')
   const [smartChunking, setSmartChunking] = useState<boolean>(true)
   const [selectedPresetId, setSelectedPresetId] = useState<string>('tiktok-classic')
+  /** Set by the Cancel button; read between clips so a long run stops promptly. */
+  const cancelledRef = useRef(false)
+  /** Which clip the running whisper job belongs to, for the progress bar. */
+  const progressClipIdRef = useRef<string | null>(null)
 
-  // Find selected video or audio clip
-  const eligibleSelectedClip = useMemo(() => {
-    return clips.find(
-      c => selectedClipIds.has(c.id) && (c.type === 'video' || c.type === 'audio') && (c.asset?.path || (c as any).path)
-    )
-  }, [clips, selectedClipIds])
+  /** Every clip the captions should cover — see selectCaptionSourceClips. */
+  const captionTargets = useMemo(
+    () => selectCaptionSourceClips(clips, selectedClipIds),
+    [clips, selectedClipIds],
+  )
 
-  // If no clip selected, find first playable video/audio clip on timeline
-  const defaultTimelineClip = useMemo(() => {
-    return clips.find(
-      c => (c.type === 'video' || c.type === 'audio') && (c.asset?.path || (c as any).path)
-    )
-  }, [clips])
-
-  const targetClip = eligibleSelectedClip || defaultTimelineClip
+  const targetClip = captionTargets[0]
+  const captionTotalDuration = useMemo(
+    () => captionTargets.reduce((total, clip) => total + clip.duration, 0),
+    [captionTargets],
+  )
 
   // Progress listener
   useEffect(() => {
     if (!window.electronAPI?.on) return
     const unbind = window.electronAPI.on('whisper:progress', (payload) => {
-      if (currentJobId && payload.jobId === currentJobId) {
-        setProgress({
-          percent: payload.percent ?? 0,
-          message: payload.message ?? '',
-        })
-      }
+      if (!currentJobId || payload.jobId !== currentJobId) return
+      // One job per clip: fold its progress into the span this clip occupies
+      // on the overall bar, or a five-clip run would rewind to 0% five times.
+      const index = Math.max(0, captionTargets.findIndex(clip => clip.id === progressClipIdRef.current))
+      const total = Math.max(1, captionTargets.length)
+      const within = (payload.percent ?? 0) / 100
+      setProgress({
+        percent: Math.min(100, Math.round(((index + within) / total) * 100)),
+        message: total > 1
+          ? `${payload.message ?? ''} (${index + 1}/${total})`.trim()
+          : (payload.message ?? ''),
+      })
     })
     return unbind
-  }, [currentJobId])
+  }, [captionTargets, currentJobId])
 
   const handleStartTranscribe = async () => {
-    if (!targetClip) {
+    if (captionTargets.length === 0) {
       setFeedback({ success: false, message: t('captions.noSelection') })
-      return
-    }
-
-    const filePath = targetClip.asset?.path || (targetClip as any).path
-    if (!filePath) {
-      setFeedback({ success: false, message: t('captions.noAudioFound') })
       return
     }
 
@@ -444,61 +445,111 @@ function AutoCaptionsPanel() {
       return
     }
 
-    const jobId = makeId('transcribe')
-    setCurrentJobId(jobId)
+    cancelledRef.current = false
     setIsTranscribing(true)
     setFeedback(null)
-    setProgress({ percent: 10, message: t('captions.extractingAudio') })
+    setProgress({ percent: 5, message: t('captions.extractingAudio') })
+
+    const chosenPreset = getSubtitlePreset(selectedPresetId)
+    const styleOverride = chosenPreset ? chosenPreset.style : undefined
+    const chunkOptions = { chunk: smartChunking, minWords: 3, maxWords: 5, maxChars: 28 }
+
+    const cues: SrtCue[] = []
+    const failures: string[] = []
 
     try {
-      const res = await window.electronAPI.whisperTranscribe({
-        jobId,
-        filePath,
-        startTime: targetClip.trimStart,
-        duration: targetClip.duration,
-        endpoint: settings.whisperEndpoint,
-        apiKey: settings.whisperApiKey,
-        model: settings.whisperModel,
-        language: selectedLanguage,
-        prompt: settings.whisperPrompt,
-      })
+      for (let position = 0; position < captionTargets.length; position += 1) {
+        if (cancelledRef.current) break
 
-      const chosenPreset = getSubtitlePreset(selectedPresetId)
-      const styleOverride = chosenPreset ? chosenPreset.style : undefined
+        const clip = captionTargets[position]
+        const filePath = clip.asset?.path || (clip as any).path
+        if (!filePath) {
+          failures.push(clip.id)
+          continue
+        }
 
-      if (res.success && res.result && res.result.segments.length > 0) {
-        const cues = whisperSegmentsToSrtCues(res.result.segments, targetClip.startTime, {
-          chunk: smartChunking,
-          minWords: 3,
-          maxWords: 5,
-          maxChars: 28,
+        const jobId = makeId('transcribe')
+        progressClipIdRef.current = clip.id
+        setCurrentJobId(jobId)
+        setProgress({
+          percent: Math.round((position / captionTargets.length) * 100),
+          message: captionTargets.length > 1
+            ? t('captions.clipProgress', { current: position + 1, total: captionTargets.length })
+            : t('captions.extractingAudio'),
         })
-        actions.importSrtCues(cues, { style: styleOverride })
-        setFeedback({
-          success: true,
-          message: t('captions.done', { count: cues.length }),
+
+        // The clip's own slice of the file, at media speed: a clip played at 2x
+        // covers twice as much of the recording as its timeline duration says.
+        const speed = clip.speed || 1
+
+        const res = await window.electronAPI.whisperTranscribe({
+          jobId,
+          filePath,
+          startTime: clip.trimStart,
+          duration: clip.duration * speed,
+          endpoint: settings.whisperEndpoint,
+          apiKey: settings.whisperApiKey,
+          model: settings.whisperModel,
+          language: selectedLanguage,
+          prompt: settings.whisperPrompt,
         })
-      } else if (res.success && res.result?.text) {
-        const cues = whisperSegmentsToSrtCues(
-          [{ id: 0, start: 0, end: targetClip.duration, text: res.result.text }],
-          targetClip.startTime,
-          {
-            chunk: smartChunking,
-            minWords: 3,
-            maxWords: 5,
-            maxChars: 28,
-          },
-        )
-        actions.importSrtCues(cues, { style: styleOverride })
-        setFeedback({
-          success: true,
-          message: t('captions.done', { count: cues.length }),
-        })
-      } else {
+
+        if (cancelledRef.current) break
+
+        // Whisper timestamps run from the start of the extracted audio, so they
+        // are media seconds inside this clip. Speed maps them onto the timeline,
+        // and the clip's own start puts them where the clip actually plays.
+        const toTimeline = (seconds: number) => seconds / speed
+
+        if (res.success && res.result && res.result.segments.length > 0) {
+          const segments = res.result.segments.map(segment => ({
+            ...segment,
+            start: toTimeline(segment.start),
+            end: toTimeline(segment.end),
+            ...(segment.words
+              ? {
+                  words: segment.words.map(word => ({
+                    ...word,
+                    start: toTimeline(word.start),
+                    end: toTimeline(word.end),
+                  })),
+                }
+              : {}),
+          }))
+          cues.push(...whisperSegmentsToSrtCues(segments, clip.startTime, chunkOptions))
+        } else if (res.success && res.result?.text) {
+          cues.push(...whisperSegmentsToSrtCues(
+            [{ id: 0, start: 0, end: clip.duration, text: res.result.text }],
+            clip.startTime,
+            chunkOptions,
+          ))
+        } else {
+          failures.push(res.error || clip.id)
+        }
+      }
+
+      // One import for the whole timeline: importSrtCues replaces the subtitle
+      // track, so importing clip by clip would leave only the last one.
+      if (cues.length > 0) {
+        const ordered = cues
+          .slice()
+          .sort((left, right) => left.startTime - right.startTime)
+          .map((cue, index) => ({ ...cue, index: index + 1 }))
+        actions.importSrtCues(ordered, { style: styleOverride })
+      }
+
+      if (cues.length === 0) {
         setFeedback({
           success: false,
-          message: res.error || 'Transcription failed',
+          message: cancelledRef.current ? t('captions.cancelled') : (failures[0] || 'Transcription failed'),
         })
+      } else if (failures.length > 0) {
+        setFeedback({
+          success: true,
+          message: `${t('captions.done', { count: cues.length })} ${t('captions.partial', { count: failures.length })}`,
+        })
+      } else {
+        setFeedback({ success: true, message: t('captions.done', { count: cues.length }) })
       }
     } catch (err: any) {
       setFeedback({
@@ -508,10 +559,14 @@ function AutoCaptionsPanel() {
     } finally {
       setIsTranscribing(false)
       setCurrentJobId(null)
+      cancelledRef.current = false
     }
   }
 
   const handleCancel = () => {
+    // The run walks a list of clips now, so cancelling the job in flight is not
+    // enough — the flag stops the loop before it starts the next one.
+    cancelledRef.current = true
     if (currentJobId && window.electronAPI?.whisperCancel) {
       window.electronAPI.whisperCancel({ jobId: currentJobId })
     }
@@ -562,10 +617,12 @@ function AutoCaptionsPanel() {
           {targetClip ? (
             <div className="flex items-center justify-between">
               <span className="text-zinc-300 font-medium truncate max-w-[190px]">
-                {targetClip.importedName || (targetClip.asset?.path ? targetClip.asset.path.split(/[/\\]/).pop() : targetClip.id)}
+                {captionTargets.length > 1
+                  ? t('captions.clipCount', { count: captionTargets.length })
+                  : (targetClip.importedName || (targetClip.asset?.path ? targetClip.asset.path.split(/[/\\]/).pop() : targetClip.id))}
               </span>
               <span className="text-zinc-500 font-mono">
-                {targetClip.duration.toFixed(1)}s
+                {captionTotalDuration.toFixed(1)}s
               </span>
             </div>
           ) : (

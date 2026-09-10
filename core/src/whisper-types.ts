@@ -1,5 +1,36 @@
 import type { ChunkOptions, SrtCue, WordTimestamp } from './srt'
 import { chunkSrtCues, chunkWordTimestamps } from './srt'
+import type { TimelineClip } from './project-model'
+
+/**
+ * Which clips a caption run should transcribe, in the order they play.
+ *
+ * A clip, not a file. Once a video has been cut, the timeline holds several
+ * clips of the same recording, each with its own trim — captioning "the video"
+ * by picking the first of them covered the first cut and left the rest of the
+ * timeline silent. Nothing selected means the whole timeline.
+ *
+ * A video that has a linked audio clip is silent on its own: the audio clip is
+ * what carries the speech, so taking both would caption the same words twice.
+ */
+export function selectCaptionSourceClips(
+  clips: TimelineClip[],
+  selectedClipIds: ReadonlySet<string>,
+): TimelineClip[] {
+  const eligible = clips.filter(clip => {
+    if (clip.type !== 'video' && clip.type !== 'audio') return false
+    if (!clip.asset?.path) return false
+    if (clip.type === 'audio') return true
+    return !(clip.linkedClipIds ?? []).some(
+      linkedId => clips.find(candidate => candidate.id === linkedId)?.type === 'audio',
+    )
+  })
+
+  const selected = eligible.filter(clip => selectedClipIds.has(clip.id))
+  return (selected.length > 0 ? selected : eligible)
+    .slice()
+    .sort((left, right) => left.startTime - right.startTime)
+}
 
 export interface WhisperWord {
   word: string

@@ -59,6 +59,13 @@ jobs:
           fi
           echo "Releasing version $PKG"
 
+      # The release body — and the "what's new" the in-app updater shows — is
+      # cut out of CHANGELOG.md. A version with no entry there would publish an
+      # empty release note, so stop here rather than after four platform builds.
+      - name: CHANGELOG must describe this version
+        if: github.ref_type == 'tag'
+        run: node scripts/release-notes.cjs --check "${GITHUB_REF_NAME#v}"
+
       - name: Report dry run
         if: github.ref_type != 'tag'
         run: |
@@ -182,3 +189,26 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/latest*.yml
+
+  # Runs once, after every platform has uploaded. Deliberately not part of the
+  # matrix: four jobs racing to rewrite the same release body would be four
+  # chances to clobber it, and electron-builder creates the release without one
+  # anyway. `gh release edit` works on a draft, so the note is in place before
+  # anyone publishes it.
+  notes:
+    name: Publish release notes
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Write the CHANGELOG section onto the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/publish-release-notes.cjs

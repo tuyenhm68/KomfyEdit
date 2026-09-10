@@ -107,12 +107,17 @@ Step 6: edit_apply (or rollback / abort if rejected)
     "title": "Cắt 2 khoảng lặng dài hơn 2 giây",
     "message": "Tổng cộng 5,1 giây sẽ bị cắt khỏi video chính.",
     "items": [
-      { "label": "1. 00:16 - 00:18", "detail": "2,4 giây", "highlight": true },
-      { "label": "2. 00:29 - 00:31", "detail": "2,7 giây", "highlight": true }
+      { "label": "1. 00:16 - 00:18", "detail": "2,4 giây", "highlight": true, "startSec": 16.1, "endSec": 18.5 },
+      { "label": "2. 00:29 - 00:31", "detail": "2,7 giây", "highlight": true, "startSec": 29.1, "endSec": 31.8 }
     ],
     "taskIndex": 2
   }
   ```
+- `startSec` / `endSec` are what make a row clickable: the playhead jumps there,
+  so the user judges the pause by watching it. They also turn the list into a
+  set of checkboxes, and the answer comes back as `selectedItemNumbers`.
+- **Cut only the numbers that came back.** An unticked range is a range the user
+  wants kept; an empty selection means cut nothing.
 - Also state, in the message: original duration vs. new duration, and the
   thresholds the count came from — the number of ranges is a function of
   `minDurationSec` and `noiseThresholdDb`, not a property of the video.

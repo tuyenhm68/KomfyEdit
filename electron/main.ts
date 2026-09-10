@@ -1,5 +1,6 @@
 import './app-paths'
 import { app } from 'electron'
+import { resolveAppUserModelId } from './app-identity'
 import { setupCSP } from './csp'
 import { registerExportHandlers } from './export/export-handler'
 import { findFfmpegPath, stopExportProcess } from './export/ffmpeg-utils'
@@ -30,12 +31,9 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
-  // Windows groups taskbar buttons — and picks the taskbar icon — by
-  // AppUserModelID. Without one, an unpackaged run inherits electron.exe's
-  // identity and Windows draws Electron's default icon instead of the
-  // BrowserWindow icon. Must match `appId` in electron-builder.yml.
+  // See app-identity.ts: the id decides which icon the taskbar button draws.
   if (process.platform === 'win32') {
-    app.setAppUserModelId('com.komfyedit.app')
+    app.setAppUserModelId(resolveAppUserModelId(app.isPackaged))
   }
 
   initSessionLog()

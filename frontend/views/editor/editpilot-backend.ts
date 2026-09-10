@@ -37,6 +37,8 @@ export interface EditPilotMessage {
    */
   confirm?: EditPilotConfirmRequest
   answeredActionId?: string
+  /** Item numbers still ticked when it was answered, for a selectable list. */
+  answeredItemNumbers?: number[]
   /** The run ended before this question was answered. */
   expired?: boolean
 }
