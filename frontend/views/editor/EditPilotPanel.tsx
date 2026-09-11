@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, ArrowUpRight, Bot, Loader2, Settings, Square, X } from 'lucide-react'
 import type { EditPilotConfirmAction, EditPilotConfirmRequest } from '@core/editpilot-confirm'
 import { parseEditPilotStream, type EditPilotPhase } from '@core/editpilot-plan'
-import { selectActiveTimeline, selectSelectedClipIds, selectShowEditPilot } from './editor-selectors'
+import {
+  selectActiveTimeline,
+  selectSelectedClipIds,
+  selectShowEditPilot,
+  selectTotalDuration,
+} from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
 import { useTranslation } from '../../i18n/I18nContext'
 import { EditPilotConfirmCard } from './EditPilotConfirmCard'
@@ -56,16 +61,27 @@ export interface EditPilotPanelProps {
   backend?: EditPilotBackend
   /** Project this panel belongs to, so another project's questions are ignored. */
   projectId?: string | null
+  /**
+   * The transport time the timeline actually draws from while it is rolling.
+   * Required, not optional: a seek that moves only the store is undone the
+   * moment playback stops, and forgetting to pass this brings that bug back.
+   */
+  playbackTimeRef: React.MutableRefObject<number>
 }
 
 const defaultBackend = createIpcBackend()
 
-export function EditPilotPanel({ backend = defaultBackend, projectId = null }: EditPilotPanelProps) {
+export function EditPilotPanel({
+  backend = defaultBackend,
+  projectId = null,
+  playbackTimeRef,
+}: EditPilotPanelProps) {
   const { t } = useTranslation()
   const actions = useEditorActions()
   const open = useEditorStore(selectShowEditPilot)
   const selectedClipIds = useEditorStore(selectSelectedClipIds)
   const activeTimeline = useEditorStore(selectActiveTimeline)
+  const totalDuration = useEditorStore(selectTotalDuration)
 
   const [messages, setMessages] = useState<EditPilotMessage[]>([])
   const [input, setInput] = useState('')
@@ -167,11 +183,21 @@ export function EditPilotPanel({ backend = defaultBackend, projectId = null }: E
    * Jump to a spot a confirmation item points at. The playhead is the whole
    * point of the card being clickable: a pause is easier to judge by watching
    * it than by reading its timecode.
+   *
+   * The ref moves before the pause, and that order is the whole fix. While the
+   * timeline rolls, `playbackTimeRef` is the authoritative time — the playhead
+   * is drawn from it, and the store's `currentTime` only mirrors it. Pausing
+   * flushes the ref back into the store, so a seek that wrote the store alone
+   * was overwritten a frame later and the red line snapped back to wherever
+   * playback had reached. Clicking an anchor mid-playback did nothing at all.
    */
   const seekToConfirmItem = useCallback((timeSec: number) => {
+    // An agent-supplied position is not guaranteed to be on the timeline.
+    const target = Math.max(0, Math.min(timeSec, totalDuration))
+    playbackTimeRef.current = target
     actions.pause()
-    actions.setCurrentTime(Math.max(0, timeSec))
-  }, [actions])
+    actions.setCurrentTime(target)
+  }, [actions, playbackTimeRef, totalDuration])
 
   /** The one question still blocking the run, if any. */
   const pendingConfirm = useMemo(() => {

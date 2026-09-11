@@ -10,6 +10,7 @@ import {
   editPilotConfigSchema,
 } from '../core/src/editpilot-agents'
 import { keyframeTrackSchema, clipMaskSchema, chromaKeySchema } from '../core/src/project-model'
+import { WHISPER_PROGRESS_STEPS } from '../core/src/whisper-types'
 
 const fileFilter = z.object({ name: z.string(), extensions: z.array(z.string()) })
 
@@ -815,7 +816,10 @@ export const electronEventSchemas = {
     jobId: z.string(),
     phase: z.enum(['extracting', 'transcribing', 'done', 'error']),
     percent: z.number().optional(),
-    message: z.string().optional(),
+    /** Stage key the renderer translates; the main process holds no locale. */
+    step: z.enum(WHISPER_PROGRESS_STEPS).optional(),
+    /** Untranslatable detail, such as an upstream error message. */
+    detail: z.string().optional(),
   }),
 } as const
 

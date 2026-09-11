@@ -7,6 +7,7 @@ import type {
   TimelineClip,
   Track,
 } from './project-model'
+import type { AssetTranscript } from './transcript-store'
 import {
   DEFAULT_LAYOUT,
   type EditorLayout,
@@ -18,6 +19,8 @@ export interface EditorModel {
   bins: AssetBins
   timelines: Timeline[]
   activeTimelineId: string | null
+  /** What Whisper heard, shared by captions, highlights and B-roll. */
+  transcripts?: AssetTranscript[]
 }
 
 export interface TimelineGapSelection {

@@ -45,15 +45,34 @@ function quote(value: string): string {
 }
 
 /**
+ * Scoped packages whose global shim hides a real .exe, keyed by the command
+ * the shim is installed under.
+ *
+ * Keyed, not tried for everything: one npm prefix holds every global package,
+ * so this path exists whenever Claude Code is installed — no matter which CLI
+ * was asked for. Asking for `codex` came back with `claude.exe`, and EditPilot
+ * ran Claude Code with Codex's arguments until it died on
+ * `unknown option '--skip-git-repo-check'`.
+ */
+const NESTED_EXE_BY_COMMAND: Record<string, string[]> = {
+  claude: [path.join('@anthropic-ai', 'claude-code', 'bin', 'claude.exe')],
+}
+
+/**
  * Checks whether an npm .cmd wrapper points to an underlying .exe binary.
  * (e.g. %dp0%\node_modules\@anthropic-ai\claude-code\bin\claude.exe)
+ *
+ * Every candidate must be derived from the command's own name, or it resolves
+ * to a sibling package's binary. Returning null is safe: the caller then runs
+ * the .cmd shim through cmd.exe.
  */
 function checkNestedExe(cmdPath: string): string | null {
   try {
     const dir = path.dirname(cmdPath)
     const baseName = path.basename(cmdPath, path.extname(cmdPath))
+    const scoped = NESTED_EXE_BY_COMMAND[baseName.toLowerCase()] ?? []
     const candidates = [
-      path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'),
+      ...scoped.map(relative => path.join(dir, 'node_modules', relative)),
       path.join(dir, 'node_modules', baseName, 'bin', `${baseName}.exe`),
       path.join(dir, 'node_modules', '.bin', `${baseName}.exe`),
     ]

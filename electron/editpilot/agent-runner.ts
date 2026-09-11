@@ -10,6 +10,7 @@ import {
   type EditPilotAgentId,
 } from '../../core/src/editpilot-agents'
 import { buildEditPilotSystemPrompt } from '../../core/src/editpilot-prompt'
+import { makeId } from '../../core/src/id-generator'
 import { buildInlineMcpConfigArgs, type InlineMcpTarget } from '../../core/src/editpilot-mcp-config'
 import { addPermissionRule } from '../../core/src/editpilot-permissions'
 import { buildSpawnPlan } from './windows-spawn'
@@ -382,6 +383,84 @@ export interface StartRunParams {
 }
 
 /** Spawns the configured CLI and streams its answer back over IPC. */
+/** How long a one-shot question may take before it is treated as unavailable. */
+const ONE_SHOT_TIMEOUT_MS = 3 * 60 * 1000
+
+/**
+ * Ask the configured CLI one self-contained question and return what it said.
+ *
+ * Not a run: no MCP server, no project doc, no conversation, no streaming to
+ * the panel. This is the path for work that only needs a model — picking viral
+ * highlights out of a transcript, say — so the user's own CLI subscription
+ * does it instead of a separate OpenAI key.
+ *
+ * Returns null rather than throwing when no CLI is usable, so the caller can
+ * fall back to its own provider instead of failing the feature outright.
+ */
+export async function runOneShot(params: {
+  prompt: string
+  timeoutMs?: number
+}): Promise<{ agentLabel: string; text: string } | null> {
+  const config = readEditPilotConfig()
+  const statuses = await detectAgents(config)
+  const agentId = resolveActiveAgent(config, statuses)
+  if (!agentId) return null
+
+  const definition = EDIT_PILOT_AGENTS[agentId]
+  const status = statuses.find(candidate => candidate.id === agentId)
+  const command = config.commandOverrides[agentId]?.trim() || status?.command || definition.commands[0]
+  const args = definition.oneShotArgs.map(arg => (arg === '{prompt}' ? params.prompt : arg))
+
+  // Its own empty directory, same as a run: pointed at anything of the user's,
+  // a CLI with file tools starts reading it instead of answering.
+  const workDir = path.join(os.tmpdir(), `komfyedit-oneshot-${makeId('os')}`)
+  fs.mkdirSync(workDir, { recursive: true })
+
+  const plan = buildSpawnPlan(command, args)
+  logger.info(`[editpilot] Hỏi nhanh ${definition.label} (${command})`)
+
+  return new Promise(resolve => {
+    const child = spawn(plan.file, plan.args, {
+      cwd: workDir,
+      windowsHide: true,
+      windowsVerbatimArguments: plan.verbatim,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (result: { agentLabel: string; text: string } | null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { fs.rmSync(workDir, { recursive: true, force: true }) } catch { /* best effort */ }
+      resolve(result)
+    }
+
+    const timer = setTimeout(() => {
+      child.kill()
+      logger.warn(`[editpilot] Hỏi nhanh ${definition.label} quá hạn`)
+      finish(null)
+    }, params.timeoutMs ?? ONE_SHOT_TIMEOUT_MS)
+
+    child.stdout?.on('data', chunk => { stdout += String(chunk) })
+    child.stderr?.on('data', chunk => { stderr += String(chunk) })
+    child.on('error', err => {
+      logger.warn(`[editpilot] Hỏi nhanh thất bại: ${err.message}`)
+      finish(null)
+    })
+    child.on('close', code => {
+      if (code !== 0 || !stdout.trim()) {
+        logger.warn(`[editpilot] Hỏi nhanh thoát mã ${code}: ${summarizeFailureDetail(stderr, [])}`)
+        finish(null)
+        return
+      }
+      finish({ agentLabel: definition.label, text: stdout })
+    })
+  })
+}
+
 export async function startRun({ runId, prompt, projectsDir, projectId, projectName, references, resumeSessionId }: StartRunParams): Promise<{ agentLabel: string }> {
   const config = readEditPilotConfig()
   const statuses = await detectAgents(config)

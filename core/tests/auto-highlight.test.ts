@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildHighlightExtractionPrompt,
+  formatTranscriptForHighlights,
   parseHighlightResponse,
   buildHighlightEditPatch,
   type HighlightCandidate,
@@ -8,6 +9,73 @@ import {
 import type { TimelineClip } from '../src/project-model'
 
 describe('auto-highlight', () => {
+  /**
+   * The panel used to send an empty transcript on every run. The model does
+   * not answer "I don't know" to that — it invents four confident highlights
+   * with round timestamps, which is what reached the user as suggestions for a
+   * video the model had never been told anything about.
+   */
+  describe('formatTranscriptForHighlights', () => {
+    it('stamps every line with the seconds it occupies', () => {
+      const text = formatTranscriptForHighlights([
+        { startTime: 0, endTime: 4.25, text: 'Chào mọi người' },
+        { startTime: 4.25, endTime: 9, text: 'Hôm nay mình quay ở Đà Lạt' },
+      ])
+      expect(text).toBe('[0.0s - 4.3s]: Chào mọi người\n[4.3s - 9.0s]: Hôm nay mình quay ở Đà Lạt')
+    })
+
+    it('orders cues by time, so a range never points at the wrong moment', () => {
+      const text = formatTranscriptForHighlights([
+        { startTime: 30, endTime: 32, text: 'sau' },
+        { startTime: 1, endTime: 2, text: 'trước' },
+      ])
+      expect(text.split('\n').map(line => line.split(': ')[1])).toEqual(['trước', 'sau'])
+    })
+
+    it('drops blank cues instead of emitting empty timestamped lines', () => {
+      const text = formatTranscriptForHighlights([
+        { startTime: 0, endTime: 1, text: '   ' },
+        { startTime: 1, endTime: 2, text: 'thật' },
+      ])
+      expect(text).toBe('[1.0s - 2.0s]: thật')
+    })
+
+    it('returns nothing for nothing, so the caller can refuse before calling the model', () => {
+      expect(formatTranscriptForHighlights([])).toBe('')
+      expect(formatTranscriptForHighlights([{ startTime: 0, endTime: 1, text: '' }])).toBe('')
+    })
+  })
+
+  /**
+   * An API call constrained to `json_object` answers in bare JSON. A CLI does
+   * not — it writes a sentence, fences the block, and signs off. Both reach
+   * parseHighlightResponse now that highlights can come from either.
+   */
+  describe('reading a CLI reply', () => {
+    const payload = { highlights: [{ title: 'A', startTime: 1, endTime: 2, hookText: 'h' }] }
+
+    it('takes the JSON out of a fenced block with prose around it', () => {
+      const reply = `Đây là 1 đoạn nổi bật:\n\n\`\`\`json\n${JSON.stringify(payload)}\n\`\`\`\n\nCần gì thêm cứ bảo mình.`
+      expect(parseHighlightResponse(reply)).toHaveLength(1)
+      expect(parseHighlightResponse(reply)[0].title).toBe('A')
+    })
+
+    it('finds a bare object buried in prose, with no fence at all', () => {
+      expect(parseHighlightResponse(`Kết quả: ${JSON.stringify(payload)} — hết.`)).toHaveLength(1)
+    })
+
+    it('is not fooled by a brace inside a string value', () => {
+      const tricky = { highlights: [{ title: 'nói về } dấu ngoặc', startTime: 0, endTime: 5 }] }
+      const parsed = parseHighlightResponse(`ok ${JSON.stringify(tricky)}`)
+      expect(parsed).toHaveLength(1)
+      expect(parsed[0].title).toBe('nói về } dấu ngoặc')
+    })
+
+    it('returns nothing for a reply that carries no JSON, so the caller can fall back', () => {
+      expect(parseHighlightResponse('Xin lỗi, mình không tìm được đoạn nào.')).toEqual([])
+    })
+  })
+
   it('builds prompt correctly with maxItems', () => {
     const transcript = '[0.0s - 10.0s] Chào mọi người\n[10.0s - 30.0s] Đây là bí quyết thành công...'
     const prompt = buildHighlightExtractionPrompt(transcript, 3)

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { spawnSync } from 'child_process'
 import fs from 'fs'
 import os from 'os'
@@ -122,3 +122,81 @@ describe.runIf(process.platform === 'win32')('buildSpawnPlan native exe resoluti
   })
 })
 
+/**
+ * A CLI must never resolve to a different CLI's binary.
+ *
+ * One npm prefix holds every global package, so the hardcoded Claude Code
+ * path used to match while resolving `codex`: EditPilot spawned claude.exe
+ * with Codex's argv and the run died on
+ * `error: unknown option '--skip-git-repo-check'`.
+ *
+ * Not gated on Windows. The lookup is plain fs and path work, so a synthetic
+ * npm prefix exercises it on any platform — and a regression that only CI on
+ * macOS or Linux would catch is exactly the one that ships.
+ */
+describe('resolveWindowsExecutable command isolation', () => {
+  let prefix: string
+  let originalPath: string | undefined
+
+  beforeEach(() => {
+    prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'komfyedit-npm-prefix-'))
+    // A global npm prefix holding Claude Code's real binary and a codex shim
+    // that has none — exactly the layout that produced the bug.
+    const claudeBin = path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code', 'bin')
+    fs.mkdirSync(claudeBin, { recursive: true })
+    fs.writeFileSync(path.join(claudeBin, 'claude.exe'), '')
+    fs.writeFileSync(path.join(prefix, 'claude.cmd'), '@echo off')
+    fs.writeFileSync(path.join(prefix, 'codex.cmd'), '@echo off')
+
+    originalPath = process.env.PATH
+    process.env.PATH = prefix
+  })
+
+  afterEach(() => {
+    process.env.PATH = originalPath
+    fs.rmSync(prefix, { recursive: true, force: true })
+  })
+
+  it('does not hand another CLI’s binary to codex', () => {
+    expect(resolveWindowsExecutable('codex')).toBeNull()
+  })
+
+  it('still resolves claude to its own nested binary', () => {
+    expect(resolveWindowsExecutable('claude')?.toLowerCase()).toContain('claude-code')
+  })
+
+  it.runIf(process.platform === 'win32')('falls back to the codex shim through cmd.exe, arguments intact', () => {
+    const plan = buildSpawnPlan('codex', ['exec', '--skip-git-repo-check', 'xin chao'])
+    expect(plan.file).toBe('cmd.exe')
+    expect(plan.args[3]).toContain('"codex"')
+    expect(plan.args[3]).toContain('--skip-git-repo-check')
+  })
+})
+
+/**
+ * macOS and Linux never touch the cmd.exe machinery: the command is spawned
+ * with clean argv, so nothing is quoted, flattened, or re-resolved. Newlines
+ * in the system prompt survive there — the flattening above is a Windows tax.
+ */
+describe.runIf(process.platform !== 'win32')('buildSpawnPlan on macOS and Linux', () => {
+  it('spawns the command itself with the arguments untouched', () => {
+    const args = ['exec', '--skip-git-repo-check', 'dong mot\ndong hai']
+    const plan = buildSpawnPlan('codex', args)
+    expect(plan.file).toBe('codex')
+    expect(plan.args).toEqual(args)
+    expect(plan.verbatim).toBe(false)
+  })
+
+  it('reaches the real binary through PATH, arguments intact', () => {
+    const printer = 'console.log(JSON.stringify(process.argv.slice(1)))'
+    const plan = buildSpawnPlan(process.execPath, [
+      '-e', printer, 'exec', '--skip-git-repo-check', 'xin chao',
+    ])
+    const result = spawnSync(plan.file, plan.args, {
+      encoding: 'utf8',
+      windowsVerbatimArguments: plan.verbatim,
+    })
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual(['exec', '--skip-git-repo-check', 'xin chao'])
+  })
+})

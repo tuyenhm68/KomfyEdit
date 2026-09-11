@@ -30,6 +30,31 @@ Tối ưu Hook 3 giây đầu:
 - Đặt ra một câu Hook ngắn (dưới 10 từ) để làm Title Card đè lên 3 giây đầu video.
 - Đề xuất preset chữ phù hợp (ví dụ: 'headline-alert', 'bold-punch', 'tiktok-classic').`
 
+/** One spoken line with the timeline seconds it occupies. */
+export interface HighlightTranscriptCue {
+  startTime: number
+  endTime: number
+  text: string
+}
+
+/**
+ * Renders cues as the timestamped transcript the highlight prompt expects.
+ *
+ * The timestamps are the only thing tying the model's answer to the recording:
+ * every range it returns is read straight back as timeline seconds, so a cue
+ * list that is out of order or carries blank lines produces ranges that point
+ * at the wrong part of the video. Callers pass timeline seconds — a clip
+ * transcribed on its own yields media seconds and has to be mapped first.
+ */
+export function formatTranscriptForHighlights(cues: HighlightTranscriptCue[]): string {
+  return cues
+    .filter(cue => cue.text.trim().length > 0)
+    .slice()
+    .sort((left, right) => left.startTime - right.startTime)
+    .map(cue => `[${cue.startTime.toFixed(1)}s - ${cue.endTime.toFixed(1)}s]: ${cue.text.trim()}`)
+    .join('\n')
+}
+
 export function buildHighlightExtractionPrompt(transcriptText: string, maxItems: number = 4): string {
   return `Dưới đây là nội dung transcript của video kèm thời gian. Hãy tìm tối đa ${maxItems} đoạn highlight viral nhất (thời lượng mỗi đoạn lý tưởng từ 25s đến 60s).
 
@@ -57,13 +82,43 @@ ${transcriptText}
 /**
  * Parses raw JSON string returned by LLM (handles optional markdown fences).
  */
+/**
+ * Digs the JSON object out of a reply that may be wrapped in anything.
+ *
+ * An API call asked for `json_object` gets bare JSON; a CLI asked the same
+ * question answers like a person — a line of preamble, a fenced block, maybe a
+ * closing remark. Both have to parse, so this takes the fence when there is
+ * one and otherwise scans for the first balanced `{…}`, tracking strings so a
+ * brace inside a quote does not end the object early.
+ */
+export function extractJsonObject(rawText: string): string {
+  const fenced = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+  const text = fenced ? fenced[1] : rawText
+
+  const start = text.indexOf('{')
+  if (start === -1) return text.trim()
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i]
+    if (escaped) { escaped = false; continue }
+    if (char === '\\') { escaped = true; continue }
+    if (char === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (char === '{') depth += 1
+    else if (char === '}') {
+      depth -= 1
+      if (depth === 0) return text.slice(start, i + 1)
+    }
+  }
+  return text.slice(start).trim()
+}
+
 export function parseHighlightResponse(rawText: string): HighlightCandidate[] {
   try {
-    let clean = rawText.trim()
-    if (clean.startsWith('```')) {
-      const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-      if (match) clean = match[1]
-    }
+    const clean = extractJsonObject(rawText)
     const data = JSON.parse(clean)
     const list = Array.isArray(data) ? data : data?.highlights
     if (!Array.isArray(list)) return []

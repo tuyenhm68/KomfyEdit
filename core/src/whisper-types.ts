@@ -32,6 +32,25 @@ export function selectCaptionSourceClips(
     .sort((left, right) => left.startTime - right.startTime)
 }
 
+/**
+ * Stages a transcription run reports as it goes.
+ *
+ * A key, not a sentence: the main process has no locale, so it names the step
+ * and the renderer looks it up under `captions.progress.*` in the active
+ * language. Adding a step here means adding it to every locale file.
+ */
+export const WHISPER_PROGRESS_STEPS = [
+  'extractingAudio',
+  'uploadingAudio',
+  'transcribing',
+  'processingSubtitles',
+  'done',
+  'cancelled',
+  'failed',
+] as const
+
+export type WhisperProgressStep = (typeof WHISPER_PROGRESS_STEPS)[number]
+
 export interface WhisperWord {
   word: string
   start: number

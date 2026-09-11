@@ -1,6 +1,12 @@
 import type { SetStateAction } from 'react'
 import type { ParsedTimeline } from './timeline-import'
 import type { SrtCue } from './srt'
+import {
+  toTranscriptSegments,
+  upsertAssetTranscript,
+  type TranscriptSegment,
+} from './transcript-store'
+import { BROLL_TRACK_NAME } from './broll-copilot'
 import type {
   Asset,
   AssetBins,
@@ -1743,6 +1749,32 @@ export function addSubtitleTrack(state: EditorState): EditorState {
     subtitles: (timeline.subtitles || []).map(subtitle => ({ ...subtitle, trackIndex: subtitle.trackIndex + 1 })),
     tracks: [track, ...timeline.tracks],
   }))
+}
+
+/**
+ * Keeps what Whisper heard, so the next feature that needs it does not pay for
+ * it again. Stored against the source media in the media's own seconds — see
+ * transcript-store.ts — and replacing any earlier transcript of the same audio.
+ */
+export function storeAssetTranscript(
+  state: EditorState,
+  params: { assetPath: string; language?: string; segments: TranscriptSegment[] },
+): EditorState {
+  const segments = toTranscriptSegments(params.segments)
+  if (segments.length === 0) return state
+
+  return markEditorModelDirty({
+    ...state,
+    editorModel: {
+      ...state.editorModel,
+      transcripts: upsertAssetTranscript(state.editorModel.transcripts, {
+        assetPath: params.assetPath,
+        language: params.language ?? '',
+        segments,
+        createdAt: Date.now(),
+      }),
+    },
+  })
 }
 
 export function importSrtCues(
@@ -4009,18 +4041,48 @@ export interface InsertBrollParams {
   muteAudio?: boolean
 }
 
+/**
+ * The track B-roll goes on: its own, and only its own.
+ *
+ * Every attempt to reuse "some track above the footage" ended up somewhere
+ * wrong. Index 0 is the subtitle track in any captioned project, and a video
+ * clip parked among the captions is drawn by nothing — the insert reported
+ * success and the picture never changed. The footage's own track is worse
+ * still: the cutaway lands on the very thing it was meant to cut away from.
+ *
+ * So B-roll gets a dedicated track, created once and reused after that.
+ * Everything it holds is then visible, movable and deletable as a group, and
+ * nothing it does can disturb the captions or the footage.
+ */
+function resolveBrollTrack(state: EditorState): { state: EditorState; trackIndex: number } {
+  const tracks = selectTracks(state)
+  const existing = tracks.findIndex(
+    track => track.name === BROLL_TRACK_NAME && track.kind === 'video' && track.type !== 'subtitle',
+  )
+  if (existing >= 0 && !tracks[existing].locked) {
+    return { state, trackIndex: existing }
+  }
+
+  const next = replaceActiveTimeline(state, timeline => ({
+    ...timeline,
+    tracks: [...timeline.tracks, {
+      id: makeId('track-broll'),
+      name: BROLL_TRACK_NAME,
+      muted: false,
+      locked: false,
+      kind: 'video' as const,
+    }],
+  }))
+  return { state: next, trackIndex: selectTracks(next).length - 1 }
+}
+
 export function insertBrollClip(state: EditorState, params: InsertBrollParams): EditorState {
   let next = state
   let trackIdx = params.trackIndex
   if (trackIdx === undefined) {
-    const tracks = selectTracks(next)
-    const existingOverlay = tracks.findIndex((t, idx) => idx > 0 && t.kind === 'video' && !t.locked)
-    if (existingOverlay >= 0) {
-      trackIdx = existingOverlay
-    } else {
-      next = addTrack(next, 'video')
-      trackIdx = selectTracks(next).length - 1
-    }
+    const resolved = resolveBrollTrack(next)
+    next = resolved.state
+    trackIdx = resolved.trackIndex
   }
 
   // Resolve or create asset

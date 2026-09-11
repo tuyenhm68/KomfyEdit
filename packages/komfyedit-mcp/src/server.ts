@@ -34,6 +34,7 @@ import {
   type EditPatch,
   computeSegmentContentHash,
   detectBrollOpportunities,
+  formatTranscriptForHighlights,
 } from '@komfyedit/core'
 import { listProjects, readProject } from './project-reader.ts'
 import {
@@ -1387,7 +1388,11 @@ export class KomfyEditMcpServer {
                   endpoint: toolArgs.endpoint,
                 })
                 if (transRes.success && transRes.result) {
-                  text = transRes.result.segments.map(s => `[${s.start.toFixed(1)}s - ${s.end.toFixed(1)}s]: ${s.text}`).join('\n')
+                  text = formatTranscriptForHighlights(transRes.result.segments.map(s => ({
+                    startTime: s.start,
+                    endTime: s.end,
+                    text: s.text,
+                  })))
                 }
               }
             }
@@ -1398,7 +1403,7 @@ export class KomfyEditMcpServer {
                 const proj = this.resolveProject()
                 const tl = this.resolveTimeline(proj)
                 if (tl.subtitles && tl.subtitles.length > 0) {
-                  text = tl.subtitles.map(s => `[${s.startTime.toFixed(1)}s - ${s.endTime.toFixed(1)}s]: ${s.text}`).join('\n')
+                  text = formatTranscriptForHighlights(tl.subtitles)
                 }
               } catch {}
             }

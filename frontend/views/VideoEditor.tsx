@@ -660,7 +660,11 @@ function VideoEditorWithStore({ currentProject, saveProject }: VideoEditorProps)
 
         {/* Docked full-height beside the whole editor body
             — not inside the top row with Details. */}
-        <EditPilotPanel backend={editPilotBackend} projectId={currentProjectId} />
+        <EditPilotPanel
+          backend={editPilotBackend}
+          projectId={currentProjectId}
+          playbackTimeRef={playbackTimeRef}
+        />
       </div>
 
       <input

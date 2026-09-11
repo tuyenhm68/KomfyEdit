@@ -27,7 +27,13 @@ import { selectCaptionSourceClips, whisperSegmentsToSrtCues } from '@core/whispe
 import type { SrtCue } from '@core/srt'
 import { makeId } from '@core/id-generator'
 import type { HighlightCandidate } from '@core/auto-highlight'
-import { buildHighlightEditPatch } from '@core/auto-highlight'
+import { buildHighlightEditPatch, formatTranscriptForHighlights } from '@core/auto-highlight'
+import {
+  findAssetTranscript,
+  subtitlesAsTranscriptCues,
+  timelineTranscriptCues,
+  transcriptCuesForClip,
+} from '@core/transcript-store'
 import { detectBrollOpportunities, type BrollOpportunity } from '@core/broll-copilot'
 import { applyEditPatchToState } from '@core/edit-patch'
 import { pathToFileUrl } from '../../lib/file-url'
@@ -107,7 +113,11 @@ export function EditorLibraryPanel(props: EditorLibraryPanelProps) {
           <EffectLibrary tab={tab} />
         )}
         {tab === 'captions' && (
-          <CaptionsLibrary section={section} onImportSrt={props.onImportSrt} />
+          <CaptionsLibrary
+            section={section}
+            onImportSrt={props.onImportSrt}
+            importFiles={props.importFiles}
+          />
         )}
         {tab === 'transitions' && <TransitionsLibrary />}
         {tab === 'stickers' && (
@@ -424,15 +434,19 @@ function AutoCaptionsPanel() {
       const index = Math.max(0, captionTargets.findIndex(clip => clip.id === progressClipIdRef.current))
       const total = Math.max(1, captionTargets.length)
       const within = (payload.percent ?? 0) / 100
+      // The main process reports a stage key, not a sentence, so the message
+      // follows the app's language instead of whatever it was written in.
+      const stage = payload.step ? t(`captions.progress.${payload.step}`) : ''
+      const stageText = payload.detail ? `${stage} ${payload.detail}`.trim() : stage
       setProgress({
         percent: Math.min(100, Math.round(((index + within) / total) * 100)),
-        message: total > 1
-          ? `${payload.message ?? ''} (${index + 1}/${total})`.trim()
-          : (payload.message ?? ''),
+        message: total > 1 && stageText
+          ? `${stageText} (${index + 1}/${total})`
+          : stageText,
       })
     })
     return unbind
-  }, [captionTargets, currentJobId])
+  }, [captionTargets, currentJobId, t])
 
   const handleStartTranscribe = async () => {
     if (captionTargets.length === 0) {
@@ -441,7 +455,7 @@ function AutoCaptionsPanel() {
     }
 
     if (!window.electronAPI?.whisperTranscribe) {
-      setFeedback({ success: false, message: 'Electron Whisper API not available' })
+      setFeedback({ success: false, message: t('captions.apiUnavailable') })
       return
     }
 
@@ -502,6 +516,21 @@ function AutoCaptionsPanel() {
         const toTimeline = (seconds: number) => seconds / speed
 
         if (res.success && res.result && res.result.segments.length > 0) {
+          // Keep the sentences before chunking cuts them into three-word
+          // scraps. Highlights and B-roll read this instead of re-transcribing,
+          // and they want whole utterances; the scraps are only good on screen.
+          // Media seconds, from the start of the file, so a later re-trim
+          // still reads the right words out of it.
+          actions.storeAssetTranscript({
+            assetPath: filePath,
+            language: res.result.language,
+            segments: res.result.segments.map(segment => ({
+              start: clip.trimStart + segment.start,
+              end: clip.trimStart + segment.end,
+              text: segment.text,
+            })),
+          })
+
           const segments = res.result.segments.map(segment => ({
             ...segment,
             start: toTimeline(segment.start),
@@ -541,7 +570,7 @@ function AutoCaptionsPanel() {
       if (cues.length === 0) {
         setFeedback({
           success: false,
-          message: cancelledRef.current ? t('captions.cancelled') : (failures[0] || 'Transcription failed'),
+          message: cancelledRef.current ? t('captions.cancelled') : (failures[0] || t('captions.failed')),
         })
       } else if (failures.length > 0) {
         setFeedback({
@@ -755,11 +784,28 @@ function AutoCaptionsPanel() {
 function AutoHighlightsPanel() {
   const { t } = useTranslation()
   const { settings, openSettings } = useSettings()
+  const actions = useEditorActions()
   const store = useEditorStoreApi()
   const clips = useEditorStore(selectClips)
   const selectedClipIds = useEditorStore(selectSelectedClipIds)
+  const transcripts = useEditorStore(s => s.editorModel.transcripts)
+
+  const subtitles = useEditorStore(
+    s => s.editorModel.timelines.find(t => t.id === s.editorModel.activeTimelineId)?.subtitles || [],
+  )
 
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  /**
+   * Whether making the transcript should also caption the timeline.
+   *
+   * Off by default, and that is deliberate: importing cues REPLACES the whole
+   * subtitle track, so a user who came here for highlights and happened to
+   * have captions would lose them to a button they pressed for another reason.
+   * Transcribing for analysis and captioning the video are two different jobs
+   * that happen to need the same trip to Whisper.
+   */
+  const [alsoCaptionTimeline, setAlsoCaptionTimeline] = useState(false)
   const [candidates, setCandidates] = useState<HighlightCandidate[]>([])
   const [feedback, setFeedback] = useState<{ success: boolean; message: string } | null>(null)
 
@@ -769,6 +815,109 @@ function AutoHighlightsPanel() {
       clips.find(c => (c.type === 'video' || c.type === 'audio') && (c.asset?.path || (c as any).path))
     )
   }, [clips, selectedClipIds])
+
+  /**
+   * The words the model is asked to pick highlights from.
+   *
+   * Subtitles first: once captions exist they are already the user's own
+   * transcript, already on the timeline's clock, and free. Only when there are
+   * none does the clip get sent to Whisper, and its timestamps are media
+   * seconds inside that clip — speed and the clip's own start put them back on
+   * the timeline, because every range the model returns is read as a timeline
+   * position when the Short is cut.
+   */
+  const targetFilePath = targetClip?.asset?.path || (targetClip as any)?.path || ''
+
+  /**
+   * The words available for this clip, and where they came from.
+   *
+   * Deciding this up front is what lets the panel talk about the transcript
+   * instead of the file: analysing is offered once there is something to
+   * analyse, and transcribing is offered when there is not.
+   */
+  const transcriptState = useMemo(() => {
+    if (!targetClip || !targetFilePath) return { cues: [], source: 'none' as const }
+
+    const stored = transcriptCuesForClip(findAssetTranscript(transcripts, targetFilePath), targetClip)
+    if (stored.length > 0) return { cues: stored, source: 'stored' as const }
+
+    // Captions still count: a project captioned before the store existed has
+    // the words, just chopped into three-word pieces.
+    if (subtitles.length > 0) {
+      return { cues: subtitlesAsTranscriptCues(subtitles), source: 'subtitles' as const }
+    }
+    return { cues: [], source: 'none' as const }
+  }, [targetClip, targetFilePath, transcripts, subtitles])
+
+  const hasTranscript = transcriptState.cues.length > 0
+
+  /**
+   * Transcribe the clip once and keep it.
+   *
+   * Separate from analysing, and that separation is the point: the transcript
+   * is the shared asset that highlights and B-roll both read, so it is made
+   * deliberately, by its own button, rather than as a hidden side effect of
+   * asking for highlights.
+   */
+  const handleCreateTranscript = async () => {
+    const clip = targetClip
+    if (!clip || !targetFilePath || !window.electronAPI?.whisperTranscribe) return
+
+    setIsTranscribing(true)
+    setFeedback(null)
+    try {
+      const speed = clip.speed || 1
+      const res = await window.electronAPI.whisperTranscribe({
+        jobId: makeId('highlight-transcribe'),
+        filePath: targetFilePath,
+        startTime: clip.trimStart,
+        duration: clip.duration * speed,
+        endpoint: settings.whisperEndpoint,
+        apiKey: settings.whisperApiKey,
+        model: settings.whisperModel,
+        prompt: settings.whisperPrompt,
+      })
+
+      if (!res.success || !res.result || res.result.segments.length === 0) {
+        setFeedback({ success: false, message: res.error || t('library.autoHighlights.noTranscript') })
+        return
+      }
+
+      // Media seconds from the start of the file, so re-trimming the clip
+      // later reads the right words out of it rather than re-transcribing.
+      actions.storeAssetTranscript({
+        assetPath: targetFilePath,
+        language: res.result.language,
+        segments: res.result.segments.map(segment => ({
+          start: clip.trimStart + segment.start,
+          end: clip.trimStart + segment.end,
+          text: segment.text,
+        })),
+      })
+
+      if (alsoCaptionTimeline) {
+        const onTimeline = res.result.segments.map(segment => ({
+          ...segment,
+          start: segment.start / speed,
+          end: segment.end / speed,
+        }))
+        actions.importSrtCues(
+          whisperSegmentsToSrtCues(onTimeline, clip.startTime, {
+            chunk: true, minWords: 3, maxWords: 5, maxChars: 28,
+          }),
+        )
+      }
+
+      setFeedback({
+        success: true,
+        message: t('library.autoHighlights.transcriptReady', { count: res.result.segments.length }),
+      })
+    } catch (err: any) {
+      setFeedback({ success: false, message: err.message || String(err) })
+    } finally {
+      setIsTranscribing(false)
+    }
+  }
 
   const handleExtract = async () => {
     if (!targetClip) {
@@ -791,9 +940,16 @@ function AutoHighlightsPanel() {
     setFeedback(null)
 
     try {
-      // 1. If transcription exists in project, pass it directly, otherwise let electron transcribe/probe
+      // Reads the transcript, never the media: the trip to Whisper is a
+      // separate, explicit step now, so analysis costs nothing but the model.
+      const transcriptText = formatTranscriptForHighlights(transcriptState.cues)
+      if (!transcriptText) {
+        setFeedback({ success: false, message: t('library.autoHighlights.noTranscript') })
+        return
+      }
+
       const res = await window.electronAPI.whisperExtractHighlights({
-        transcriptText: '', // whisper-service will use file or fallback
+        transcriptText,
         apiKey: settings.whisperApiKey,
         endpoint: settings.whisperEndpoint,
         model: 'gpt-4o-mini',
@@ -804,7 +960,12 @@ function AutoHighlightsPanel() {
         setCandidates(res.highlights)
         setFeedback({ success: true, message: t('library.autoHighlights.foundCount', { count: res.highlights.length }) })
       } else {
-        setFeedback({ success: false, message: res.error || t('library.autoHighlights.notFound') })
+        setFeedback({
+          success: false,
+          message: res.error === 'EMPTY_TRANSCRIPT'
+            ? t('library.autoHighlights.noTranscript')
+            : res.error || t('library.autoHighlights.notFound'),
+        })
       }
     } catch (err: any) {
       setFeedback({ success: false, message: err.message || String(err) })
@@ -842,28 +1003,79 @@ function AutoHighlightsPanel() {
         </button>
       </div>
 
-      {/* Target scope */}
+      {/* Transcript — the thing being analysed, and the thing shared with B-roll */}
       <div className="space-y-1.5">
-        <label className="text-[11px] font-medium text-zinc-300 block">{t('library.autoHighlights.analyzeClip')}</label>
-        <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2.5 text-[11px]">
-          {targetClip ? (
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-300 font-medium truncate max-w-[190px]">
-                {targetClip.importedName || (targetClip.asset?.path ? targetClip.asset.path.split(/[/\\]/).pop() : targetClip.id)}
-              </span>
-              <span className="text-zinc-500 font-mono">
-                {targetClip.duration.toFixed(1)}s
-              </span>
-            </div>
-          ) : (
+        <label className="text-[11px] font-medium text-zinc-300 block">
+          {t('library.autoHighlights.transcriptLabel')}
+        </label>
+        <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2.5 text-[11px] space-y-2">
+          {!targetClip ? (
             <span className="text-zinc-500">{t('library.autoHighlights.noClip')}</span>
+          ) : hasTranscript ? (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                  <CheckCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                  {t('library.autoHighlights.transcriptReadyShort', { count: transcriptState.cues.length })}
+                </span>
+                <button
+                  onClick={handleCreateTranscript}
+                  disabled={isTranscribing || isAnalyzing}
+                  className="text-zinc-400 underline-offset-2 hover:text-zinc-200 hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                >
+                  {t('library.autoHighlights.retranscribe')}
+                </button>
+              </div>
+              {transcriptState.source === 'subtitles' && (
+                <p className="text-[10.5px] leading-relaxed text-amber-400/80">
+                  {t('library.autoHighlights.fromSubtitlesNote')}
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="leading-relaxed text-zinc-400">
+                {t('library.autoHighlights.transcriptMissing')}
+              </p>
+              <label className="flex cursor-pointer items-start gap-2 text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={alsoCaptionTimeline}
+                  onChange={e => setAlsoCaptionTimeline(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 accent-accent"
+                />
+                <span className="leading-relaxed">
+                  {t('library.autoHighlights.alsoCaption')}
+                  <span className="block text-[10.5px] text-zinc-500">
+                    {t('library.autoHighlights.alsoCaptionHint')}
+                  </span>
+                </span>
+              </label>
+              <button
+                onClick={handleCreateTranscript}
+                disabled={isTranscribing}
+                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-[12px] font-medium text-zinc-100 transition-colors hover:bg-zinc-700 disabled:pointer-events-none disabled:opacity-40"
+              >
+                {isTranscribing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>{t('library.autoHighlights.transcribing')}</span>
+                  </>
+                ) : (
+                  <>
+                    <Captions className="h-4 w-4" />
+                    <span>{t('library.autoHighlights.createTranscript')}</span>
+                  </>
+                )}
+              </button>
+            </>
           )}
         </div>
       </div>
 
       <button
         onClick={handleExtract}
-        disabled={isAnalyzing || !targetClip}
+        disabled={isAnalyzing || isTranscribing || !hasTranscript}
         className="w-full py-2 px-3 rounded-lg bg-accent hover:bg-accent/90 text-zinc-950 text-[12px] font-semibold transition-all shadow-md shadow-accent/10 disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2 cursor-pointer"
       >
         {isAnalyzing ? (
@@ -938,19 +1150,62 @@ function AutoHighlightsPanel() {
   )
 }
 
-function BrollCopilotPanel() {
+function BrollCopilotPanel({ importFiles }: {
+  importFiles: (files: FileList | File[]) => Promise<unknown>
+}) {
   const { t } = useTranslation()
   const actions = useEditorActions()
   const clips = useEditorStore(selectClips)
   const subtitles = useEditorStore(s => s.editorModel.timelines.find(t => t.id === s.editorModel.activeTimelineId)?.subtitles || [])
+  const transcripts = useEditorStore(s => s.editorModel.transcripts)
   const assets = useEditorStore(s => s.editorModel.assets)
   const [opportunities, setOpportunities] = useState<BrollOpportunity[]>([])
   const [hasScanned, setHasScanned] = useState(false)
   const [feedback, setFeedback] = useState<{ success: boolean; message: string } | null>(null)
+  const [selectedBrollAssetId, setSelectedBrollAssetId] = useState<string>('')
+
+  /**
+   * Media that could actually serve as B-roll.
+   *
+   * Anything already on the timeline is excluded. The panel used to take the
+   * first video asset in the project, which is the footage being edited — so
+   * "insert B-roll" laid a few seconds of the video over itself, and playback
+   * looked unchanged because it was the same picture.
+   */
+  const brollAssets = useMemo(() => {
+    const onTimeline = new Set(
+      clips.map(clip => clip.assetId).filter((id): id is string => Boolean(id)),
+    )
+    return assets.filter(
+      asset => (asset.type === 'video' || asset.type === 'image') && !onTimeline.has(asset.id),
+    )
+  }, [assets, clips])
+
+  const brollAsset = brollAssets.find(a => a.id === selectedBrollAssetId) ?? brollAssets[0]
+  const brollFileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleImportBrollMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) await importFiles(files)
+    e.target.value = ''
+  }
 
   const handleScan = () => {
+    // The stored transcript wins over the caption track: it holds whole
+    // utterances, so a talking block is found from where speech actually runs
+    // rather than from where smart chunking happened to break a line. Captions
+    // remain the fallback for projects transcribed before the store existed.
+    const transcriptCues = timelineTranscriptCues(transcripts, clips)
+    const speechCues = transcriptCues.length > 0 ? transcriptCues : subtitlesAsTranscriptCues(subtitles)
+
     const opps = detectBrollOpportunities({
-      subtitles,
+      subtitles: speechCues.map((cue, index) => ({
+        id: `transcript-${index}`,
+        text: cue.text,
+        startTime: cue.startTime,
+        endTime: cue.endTime,
+        trackIndex: 0,
+      })),
       existingClips: clips,
       minDuration: 5.0,
       maxDuration: 8.0,
@@ -962,7 +1217,7 @@ function BrollCopilotPanel() {
     } else {
       setFeedback({
         success: false,
-        message: subtitles.length === 0
+        message: speechCues.length === 0
           ? t('library.brollCopilot.noSubtitles')
           : t('library.brollCopilot.noLongSpeeches'),
       })
@@ -970,10 +1225,10 @@ function BrollCopilotPanel() {
   }
 
   const handleInsert = (opp: BrollOpportunity) => {
-    const brollAsset = assets.find(a => a.type === 'video' || a.type === 'image')
+    if (!brollAsset) return
     actions.insertBrollClip({
-      assetId: brollAsset?.id,
-      assetPath: brollAsset?.path,
+      assetId: brollAsset.id,
+      assetPath: brollAsset.path,
       startTime: opp.startTime,
       duration: opp.duration,
       fadeIn: 0.25,
@@ -1033,6 +1288,50 @@ function BrollCopilotPanel() {
 
       {hasScanned && opportunities.length > 0 && (
         <div className="space-y-3">
+          {/* What actually gets laid over the speaker. Without this the panel
+              silently reused the footage being edited, so nothing changed. */}
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-medium text-zinc-300">
+              {t('library.brollCopilot.sourceLabel')}
+            </label>
+            {brollAssets.length > 0 ? (
+              <select
+                value={brollAsset?.id ?? ''}
+                onChange={e => setSelectedBrollAssetId(e.target.value)}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[11px] text-zinc-200"
+              >
+                {brollAssets.map(asset => (
+                  <option key={asset.id} value={asset.id}>
+                    {asset.path ? asset.path.split(/[/\\]/).pop() : asset.id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              // A dead end otherwise: the panel said to import media and gave
+              // no way to do it, so the run simply stopped here.
+              <div className="space-y-2 rounded-lg border border-amber-800/80 bg-amber-950/40 p-2">
+                <p className="text-[11px] leading-relaxed text-amber-300">
+                  {t('library.brollCopilot.noBrollMedia')}
+                </p>
+                <button
+                  onClick={() => brollFileInputRef.current?.click()}
+                  className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded bg-amber-900/60 px-2.5 py-1.5 text-[11px] font-medium text-amber-100 transition-colors hover:bg-amber-900"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>{t('library.brollCopilot.importBrollBtn')}</span>
+                </button>
+                <input
+                  ref={brollFileInputRef}
+                  type="file"
+                  accept="video/*,image/*"
+                  multiple
+                  className="hidden"
+                  onChange={handleImportBrollMedia}
+                />
+              </div>
+            )}
+          </div>
+
           <p className="text-[11px] font-semibold text-zinc-300 uppercase tracking-wider">
             {t('library.brollCopilot.suggestedSpots', { count: opportunities.length })}
           </p>
@@ -1068,7 +1367,8 @@ function BrollCopilotPanel() {
 
               <button
                 onClick={() => handleInsert(o)}
-                className="w-full mt-1 py-1.5 px-2.5 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] font-medium text-accent transition-colors flex items-center justify-center gap-1.5"
+                disabled={!brollAsset}
+                className="w-full mt-1 py-1.5 px-2.5 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] font-medium text-accent transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:pointer-events-none"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>{t('library.brollCopilot.insertBtn')}</span>
@@ -1081,7 +1381,11 @@ function BrollCopilotPanel() {
   )
 }
 
-function CaptionsLibrary({ section, onImportSrt }: { section: string; onImportSrt: () => void }) {
+function CaptionsLibrary({ section, onImportSrt, importFiles }: {
+  section: string
+  onImportSrt: () => void
+  importFiles: (files: FileList | File[]) => Promise<unknown>
+}) {
   const actions = useEditorActions()
   const { t } = useTranslation()
 
@@ -1094,7 +1398,7 @@ function CaptionsLibrary({ section, onImportSrt }: { section: string; onImportSr
   }
 
   if (section === 'broll-copilot') {
-    return <BrollCopilotPanel />
+    return <BrollCopilotPanel importFiles={importFiles} />
   }
 
   return (

@@ -554,6 +554,24 @@ export const timelineSchema = z.object({
 
 export const assetBinsSchema = z.record(z.string(), z.string())
 
+/**
+ * What Whisper heard, kept so the next feature that needs it does not pay for
+ * it again. Seconds are the media's own, measured from the start of the file —
+ * see transcript-store.ts for why that outlives trimming and moving.
+ */
+export const transcriptSegmentSchema = z.object({
+  start: z.number().min(0),
+  end: z.number().min(0),
+  text: z.string(),
+})
+
+export const assetTranscriptSchema = z.object({
+  assetPath: z.string(),
+  language: z.string().default(''),
+  segments: z.array(transcriptSegmentSchema),
+  createdAt: z.number(),
+})
+
 export const projectV2Schema = z.object({
   version: z.literal(2),
   id: z.string(),
@@ -564,6 +582,10 @@ export const projectV2Schema = z.object({
   assets: z.array(assetSchema),
   timelines: z.array(timelineSchema),
   activeTimelineId: z.string().optional(),
+  // Optional, like transitions above: a project saved before the transcript
+  // store existed simply has no field, and absent reads as empty everywhere.
+  // No migration is needed — the first transcription fills it in.
+  transcripts: z.array(assetTranscriptSchema).optional(),
 })
 
 const assetV1Schema = assetSchema
@@ -607,6 +629,7 @@ export type ClipEffect = z.infer<typeof clipEffectSchema>
 export type TextOverlayStyle = z.infer<typeof textOverlayStyleSchema>
 export type TimelineClip = z.infer<typeof timelineClipSchema>
 export type Timeline = z.infer<typeof timelineSchema>
+export type AssetTranscriptRecord = z.infer<typeof assetTranscriptSchema>
 export type AssetBins = z.infer<typeof assetBinsSchema>
 export type ProjectV1 = z.infer<typeof projectV1Schema>
 export type ProjectV2 = z.infer<typeof projectV2Schema>

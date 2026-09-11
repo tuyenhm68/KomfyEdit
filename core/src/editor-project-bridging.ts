@@ -66,6 +66,9 @@ export function getEditorModel(project: Project): EditorModel {
     bins: project.bins,
     timelines,
     activeTimelineId: project.activeTimelineId ?? timelines[0]?.id ?? null,
+    // Absent on every project saved before the store existed; the readers all
+    // treat undefined as "nothing transcribed yet", so no migration is needed.
+    transcripts: project.transcripts,
   }
 }
 
@@ -76,6 +79,7 @@ export function updatedProject(fromProject: Project, editorModel: EditorModel): 
     bins: editorModel.bins,
     timelines: editorModel.timelines,
     activeTimelineId: editorModel.activeTimelineId ?? editorModel.timelines[0]?.id,
+    transcripts: editorModel.transcripts,
     updatedAt: Date.now(),
   }
 }

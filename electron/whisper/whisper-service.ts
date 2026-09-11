@@ -4,7 +4,11 @@ import { createRequire } from 'module'
 import { resolveUserDataDir } from '../../core/src/app-paths'
 import { logger } from '../logger'
 import { extractAudioForWhisper, type ExtractAudioResult } from './audio-extractor'
-import type { WhisperTranscriptionResult, WhisperSegment } from '../../core/src/whisper-types'
+import type {
+  WhisperTranscriptionResult,
+  WhisperSegment,
+  WhisperProgressStep,
+} from '../../core/src/whisper-types'
 import {
   HIGHLIGHT_SYSTEM_INSTRUCTION,
   buildHighlightExtractionPrompt,
@@ -39,7 +43,14 @@ export interface TranscribeOptions {
   language?: string
   prompt?: string
   temperature?: number
-  onProgress?: (phase: 'extracting' | 'transcribing' | 'done' | 'error', percent?: number, message?: string) => void
+  onProgress?: (
+    phase: 'extracting' | 'transcribing' | 'done' | 'error',
+    percent?: number,
+    /** Stable key the renderer translates — never a user-facing string. */
+    step?: WhisperProgressStep,
+    /** Untranslatable detail (an upstream error message), appended by the UI. */
+    detail?: string,
+  ) => void
 }
 
 interface ActiveJob {
@@ -256,7 +267,7 @@ class WhisperService {
 
     try {
       // Step 1: Extract audio to lightweight MP3 Mono
-      onProgress?.('extracting', 15, 'Trích xuất âm thanh...')
+      onProgress?.('extracting', 15, 'extractingAudio')
 
       const audioExtraction = extractAudioForWhisper({
         inputPath: filePath,
@@ -272,7 +283,7 @@ class WhisperService {
         throw new Error('Transcription cancelled by user')
       }
 
-      onProgress?.('transcribing', 40, 'Đang gửi âm thanh tới Whisper Service...')
+      onProgress?.('transcribing', 40, 'uploadingAudio')
 
       // Step 2: Read MP3 into FormData
       const audioBuffer = fs.readFileSync(extracted.outputPath)
@@ -309,7 +320,7 @@ class WhisperService {
 
       logger.info(`[whisper-service] Sending audio to ${transcriptionsUrl} (model=${model})`)
 
-      onProgress?.('transcribing', 60, 'Đang nhận dạng lời nói...')
+      onProgress?.('transcribing', 60, 'transcribing')
 
       const response = await fetch(transcriptionsUrl, {
         method: 'POST',
@@ -329,7 +340,7 @@ class WhisperService {
         throw new Error(`Whisper API error (${response.status}): ${errDetails.slice(0, 300)}`)
       }
 
-      onProgress?.('transcribing', 90, 'Đang xử lý phụ đề...')
+      onProgress?.('transcribing', 90, 'processingSubtitles')
 
       const data = (await response.json()) as any
 
@@ -370,15 +381,15 @@ class WhisperService {
         segments,
       }
 
-      onProgress?.('done', 100, 'Hoàn thành bóc băng!')
+      onProgress?.('done', 100, 'done')
       return { success: true, result: transcriptionResult }
     } catch (err: any) {
       if (err.name === 'AbortError' || abortController.signal.aborted) {
-        onProgress?.('error', 0, 'Đã huỷ tác vụ')
+        onProgress?.('error', 0, 'cancelled')
         return { success: false, error: 'Transcription cancelled by user' }
       }
       logger.error(`[whisper-service] Transcription failed: ${err.message}`)
-      onProgress?.('error', 0, `Lỗi: ${err.message}`)
+      onProgress?.('error', 0, 'failed', err.message)
       return { success: false, error: err.message || String(err) }
     } finally {
       if (extracted) {
@@ -400,6 +411,14 @@ class WhisperService {
     maxItems?: number
   }): Promise<{ success: boolean; highlights?: HighlightCandidate[]; error?: string }> {
     try {
+      // An empty transcript is not an empty answer: the model still returns
+      // four confident highlights, invented whole, with round timestamps that
+      // point nowhere in the recording. The panel used to send '' on every
+      // run, so every suggestion it showed was fiction. Refuse instead.
+      if (!params.transcriptText.trim()) {
+        return { success: false, error: 'EMPTY_TRANSCRIPT' }
+      }
+
       const storedKey = this.getStoredApiKey()
       const effectiveKey = params.apiKey || storedKey.apiKey
       if (!effectiveKey) {

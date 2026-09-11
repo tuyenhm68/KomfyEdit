@@ -85,4 +85,20 @@ describe('buildArgs — MCP wiring', () => {
       args.findIndex(arg => arg.includes('xin chào')),
     )
   })
+
+  /**
+   * `codex exec` pins approval to `never`, and an MCP tool call needs an
+   * approval that never arrives: every call failed with `MCP tool call
+   * requires approval, but approval policy is never`, so the agent reported
+   * that its permissions blocked access to the video.
+   */
+  it('lets Codex approve its own MCP calls, which exec cannot ask a human for', () => {
+    const args = buildArgs(EDIT_PILOT_AGENTS.codex, 'xin chào', SYS, null, null, target)
+    expect(args).toContain('--approve-for-me')
+    expect(args.indexOf('--approve-for-me')).toBeLessThan(
+      args.findIndex(arg => arg.includes('xin chào')),
+    )
+    // The blunt instrument stays out: it drops the sandbox entirely.
+    expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+  })
 })

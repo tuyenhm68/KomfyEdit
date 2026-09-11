@@ -18,6 +18,17 @@ export interface DetectBrollParams {
   minDuration?: number // default 5.0 seconds
   maxDuration?: number // default 8.0 seconds
   sceneCutPoints?: number[] // known scene change timestamps
+  /**
+   * Longest silence that still counts as the same stretch of talking.
+   *
+   * Two seconds, not one. Caption cues are chopped mid-sentence and follow
+   * each other with no pause at all, so one second was plenty for them — but
+   * the scan reads a real transcript now, and a person drawing breath between
+   * sentences leaves one to two seconds of silence. At the old threshold every
+   * sentence became its own block, no block reached the five-second minimum,
+   * and a video of solid speech reported nothing to do.
+   */
+  maxGapWithinBlock?: number // default 2.0 seconds
 }
 
 // Common stop words in Vietnamese and English to filter out from keyword extraction
@@ -41,6 +52,42 @@ const STOP_WORDS = new Set([
   'also', 'back', 'after', 'use', 'two', 'how', 'our', 'work', 'first', 'well', 'way',
   'even', 'new', 'want', 'because', 'any', 'these', 'give', 'day', 'most', 'us',
 ])
+
+/** Name the dedicated B-roll overlay track is created and found under. */
+export const BROLL_TRACK_NAME = 'B-roll'
+
+/**
+ * The track the main footage is on.
+ *
+ * Not track 0. `trackIndex` is a position in a mixed list of video, audio and
+ * subtitle tracks, in whatever order they were created, so the main video can
+ * sit anywhere — in a real project it was found on track 1, with a subtitle
+ * track below it. Everything here used to assume "0 is the footage, anything
+ * above is an overlay", which made the main video look like B-roll covering
+ * its own timeline end to end, and the scan reported nothing to do.
+ *
+ * Picked by total footage duration: a B-roll insert is a few seconds against
+ * a clip that runs the length of the video, so the base never loses.
+ */
+export function selectBaseFootageTrackIndex(clips: ReadonlyArray<TimelineClip>): number | null {
+  const totals = new Map<number, number>()
+  for (const clip of clips) {
+    if (clip.type !== 'video' && clip.type !== 'image') continue
+    totals.set(clip.trackIndex, (totals.get(clip.trackIndex) ?? 0) + clip.duration)
+  }
+  if (totals.size === 0) return null
+
+  let bestIndex: number | null = null
+  let bestTotal = -1
+  for (const [trackIndex, total] of totals) {
+    // Ties go to the lower track, which renders underneath.
+    if (total > bestTotal || (total === bestTotal && bestIndex !== null && trackIndex < bestIndex)) {
+      bestIndex = trackIndex
+      bestTotal = total
+    }
+  }
+  return bestIndex
+}
 
 function getSubEnd(s: SubtitleClip): number {
   if (typeof s.endTime === 'number') return s.endTime
@@ -89,6 +136,7 @@ export function detectBrollOpportunities(params: DetectBrollParams): BrollOpport
     minDuration = 5.0,
     maxDuration = 8.0,
     sceneCutPoints = [],
+    maxGapWithinBlock = 2.0,
   } = params
 
   if (!subtitles || subtitles.length === 0) {
@@ -98,9 +146,20 @@ export function detectBrollOpportunities(params: DetectBrollParams): BrollOpport
   // Sorted subtitles
   const sortedSubs = [...subtitles].sort((a, b) => a.startTime - b.startTime)
 
-  // Identify existing B-roll / overlay intervals (clips on trackIndex > 0)
+  /*
+   * Where the picture is already covered by something other than the speaker.
+   *
+   * Footage on a track other than the base one. Two things are deliberately
+   * not counted: the main video, which is the thing B-roll goes over rather
+   * than a reason to skip (see selectBaseFootageTrackIndex), and audio, which
+   * can never be B-roll — a video whose audio has been detached has an audio
+   * clip spanning the whole timeline, and counting it left no free slot
+   * anywhere. Text, stickers and adjustment layers are skipped too: B-roll
+   * plays happily under a caption.
+   */
+  const baseTrackIndex = selectBaseFootageTrackIndex(existingClips)
   const overlayIntervals: Array<{ start: number; end: number }> = existingClips
-    .filter(c => c.trackIndex > 0)
+    .filter(c => (c.type === 'video' || c.type === 'image') && c.trackIndex !== baseTrackIndex)
     .map(c => ({ start: c.startTime, end: c.startTime + c.duration }))
 
   // Check if a range overlaps with existing B-roll
@@ -117,7 +176,8 @@ export function detectBrollOpportunities(params: DetectBrollParams): BrollOpport
 
   const opportunities: BrollOpportunity[] = []
 
-  // Group consecutive subtitle cues that form talking blocks with gaps < 1.0s
+  // Group consecutive cues into one stretch of talking, breaking only on a
+  // silence long enough to be a real pause rather than a breath.
   let currentBlock: SubtitleClip[] = []
   const blocks: SubtitleClip[][] = []
 
@@ -128,7 +188,7 @@ export function detectBrollOpportunities(params: DetectBrollParams): BrollOpport
     } else {
       const prev = currentBlock[currentBlock.length - 1]
       const gap = sub.startTime - getSubEnd(prev)
-      if (gap <= 1.0) {
+      if (gap <= maxGapWithinBlock) {
         currentBlock.push(sub)
       } else {
         blocks.push(currentBlock)

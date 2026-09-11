@@ -24,6 +24,16 @@ export interface EditPilotAgentDefinition {
    * `{prompt}` is substituted at spawn time.
    */
   headlessArgs: string[]
+  /**
+   * How this CLI answers one self-contained question in plain text.
+   *
+   * Separate from `headlessArgs` because that shape is built for the editing
+   * loop: Claude's carries `--output-format stream-json`, which would hand back
+   * a transcript of events rather than the answer. A one-shot has no MCP
+   * server, no project doc and no conversation — the whole instruction rides
+   * in `{prompt}`, and stdout is expected to be the reply.
+   */
+  oneShotArgs: string[]
   /** Flag that limits the run to an explicit tool allowlist, when the CLI has one. */
   allowedToolsFlag: string | null
   /**
@@ -98,6 +108,7 @@ export const EDIT_PILOT_AGENTS: Record<EditPilotAgentId, EditPilotAgentDefinitio
     commands: ['claude'],
     versionArgs: ['--version'],
     headlessArgs: ['-p', '{prompt}', '--output-format', 'stream-json', '--verbose'],
+    oneShotArgs: ['-p', '{prompt}'],
     allowedToolsFlag: '--allowedTools',
     resumeFlag: '--resume',
     disallowedToolsFlag: '--disallowedTools',
@@ -119,9 +130,20 @@ export const EDIT_PILOT_AGENTS: Record<EditPilotAgentId, EditPilotAgentDefinitio
     commands: ['codex'],
     versionArgs: ['--version'],
     // EditPilot runs the CLI in an empty scratch directory, which is neither a
-    // git repo nor a directory Codex has been told to trust; without this flag
-    // it refuses to start at all.
-    headlessArgs: ['exec', '--skip-git-repo-check', '{prompt}'],
+    // git repo nor a directory Codex has been told to trust; without
+    // --skip-git-repo-check it refuses to start at all.
+    //
+    // --approve-for-me is what makes the MCP tools callable. `codex exec`
+    // pins its approval policy to `never`, and an MCP tool call needs an
+    // approval it can never get, so every call came back
+    // `MCP tool call requires approval, but approval policy is never` — the
+    // agent saw the tools, could not call one, and told the user its
+    // permissions blocked access to the video. This flag routes those
+    // approvals through Codex's automatic review instead of a human. It is
+    // the narrow option: --dangerously-bypass-approvals-and-sandbox would
+    // also work and would hand the agent the whole disk and the network.
+    headlessArgs: ['exec', '--skip-git-repo-check', '--approve-for-me', '{prompt}'],
+    oneShotArgs: ['exec', '--skip-git-repo-check', '{prompt}'],
     allowedToolsFlag: null,
     resumeFlag: null,
     disallowedToolsFlag: null,
@@ -150,6 +172,7 @@ export const EDIT_PILOT_AGENTS: Record<EditPilotAgentId, EditPilotAgentDefinitio
     commands: ['agy', 'antigravity'],
     versionArgs: ['--version'],
     headlessArgs: ['-p', '{prompt}'],
+    oneShotArgs: ['-p', '{prompt}'],
     allowedToolsFlag: null,
     // `agy` resumes by id too, but its plain-text output never reveals one.
     resumeFlag: null,

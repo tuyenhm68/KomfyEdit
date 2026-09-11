@@ -1,6 +1,6 @@
 {
   "name": "komfyedit",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "KomfyEdit - Desktop Video Editor",
   "type": "module",
   "main": "dist-electron/main.js",
