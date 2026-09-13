@@ -56,7 +56,8 @@ function templateDocPath(templatesDir: string, fileName: string): string | null 
 export function getTemplatesDir(presetsDir?: string): string {
   const configured = presetsDir?.trim()
   if (configured) {
-    const base = path.isAbsolute(configured) ? configured : path.join(process.cwd(), configured)
+    const isAbs = path.isAbsolute(configured) || path.win32.isAbsolute(configured) || path.posix.isAbsolute(configured)
+    const base = isAbs ? configured : path.join(process.cwd(), configured)
     return path.join(base, 'templates')
   }
 
