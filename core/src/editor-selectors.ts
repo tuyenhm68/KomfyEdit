@@ -392,6 +392,26 @@ export function selectTotalDuration(state: EditorState): number {
   )
 }
 
+/**
+ * The actual content duration on the active timeline (end of the latest clip or subtitle).
+ * Returns 0 if the timeline has no clips and no subtitles.
+ */
+export function selectContentDuration(state: EditorState): number {
+  const clips = selectClips(state)
+  const activeTimeline = selectActiveTimeline(state)
+  const subtitles = activeTimeline?.subtitles || []
+  let max = 0
+  for (const clip of clips) {
+    const end = clip.startTime + clip.duration
+    if (end > max) max = end
+  }
+  for (const sub of subtitles) {
+    const end = sub.endTime
+    if (end > max) max = end
+  }
+  return max
+}
+
 export function selectZoom(state: EditorState): number {
   return state.session.tools.zoom
 }
@@ -454,6 +474,16 @@ export function selectSourceSplitPercent(state: EditorState): number {
 
 export function selectHasSourceAsset(state: EditorState): boolean {
   return state.session.ui.hasSourceAsset
+}
+
+export function selectPreviewAssetId(state: EditorState): string | null {
+  return state.session.ui.previewAssetId ?? null
+}
+
+export function selectPreviewAsset(state: EditorState): Asset | null {
+  const id = state.session.ui.previewAssetId
+  if (!id) return null
+  return state.editorModel.assets.find(a => a.id === id) ?? null
 }
 
 export function selectTimelineRenameState(state: EditorState): Pick<EditorState['session']['ui'], 'renamingTimelineId' | 'renameValue' | 'renameSource'> {
@@ -936,9 +966,14 @@ export function equalAssetBins(left: AssetBinListItem[], right: AssetBinListItem
  * A sticker dropped on the timeline still needs an asset for clip lookups, but
  * showing it here left blank tiles the user never asked for. Projects saved
  * before `source` existed are recognised by the prompt addStickerClip writes.
+ * Sound effect (SFX) clips ship with the app and should likewise never clutter
+ * the user's imported media library.
  */
 function isUserImportedAsset(asset: Asset): boolean {
-  return asset.source !== 'sticker' && !asset.prompt.startsWith('Sticker: ')
+  if (asset.source === 'sticker' || asset.source === 'sfx') return false
+  if (asset.prompt.startsWith('Sticker: ') || asset.prompt.startsWith('SFX: ')) return false
+  if (asset.path && (asset.path.startsWith('stickers/') || asset.path.startsWith('sfx/'))) return false
+  return true
 }
 
 export function selectFilteredAssets(state: EditorState, filters: AssetListFilters): Asset[] {

@@ -79,7 +79,7 @@ export interface EditorToolsState {
 }
 
 /**
- * The nine tabs on the rail under the title bar. Whichever one is active
+ * The tabs on the rail under the title bar. Whichever one is active
  * decides both the sub-nav pills in the narrow left column and what the
  * library panel next to them renders.
  */
@@ -93,6 +93,7 @@ export type LibraryTab =
   | 'captions'
   | 'filters'
   | 'adjust'
+  | 'templates'
 
 export interface EditorUiState {
   libraryTab: LibraryTab
@@ -109,6 +110,7 @@ export interface EditorUiState {
   activeFocusArea: 'source' | 'timeline'
   sourceSplitPercent: number
   hasSourceAsset: boolean
+  previewAssetId: string | null
   openTimelineIds: Set<string>
   renamingTimelineId: string | null
   renameValue: string
@@ -303,6 +305,7 @@ export function createInitialEditorState(
         activeFocusArea: 'timeline',
         sourceSplitPercent: 50,
         hasSourceAsset: false,
+        previewAssetId: null,
         openTimelineIds: editorModel.activeTimelineId ? new Set([editorModel.activeTimelineId]) : new Set(),
         renamingTimelineId: null,
         renameValue: '',

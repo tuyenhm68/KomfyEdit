@@ -8,7 +8,7 @@ import {
 import { migrateClip, getClipEffectStyles } from '../src/video-editor-utils'
 import { addFilterClip } from '../src/editor-actions'
 import { createInitialEditorState } from '../src/editor-state'
-import { selectClips } from '../src/editor-selectors'
+import { selectClips, selectTracks } from '../src/editor-selectors'
 import type { TimelineClip } from '../src/project-model'
 
 describe('Sprint F1: Filter Registry and Migration', () => {
@@ -272,7 +272,79 @@ describe('Sprint F1: Filter Registry and Migration', () => {
     const filterClip = clips[0]
     expect(filterClip.type).toBe('adjustment')
     expect(filterClip.startTime).toBe(0)
+    expect(filterClip.trackIndex).toBe(1) // Created V2 and placed on top!
     expect(filterClip.filter).toEqual({ id: 'cine-teal-orange', intensity: 80 })
     expect(filterClip.importedName).toBe('Filter: Cine Teal & Orange')
+  })
+
+  it('never places filter clip on main track V1 even if trackIndex 0 is requested', () => {
+    const timeline = {
+      id: 'timeline-1',
+      name: 'Main Timeline',
+      createdAt: Date.now(),
+      tracks: [
+        { id: 'v1', kind: 'video' as const, name: 'V1', locked: false, muted: false },
+      ],
+      clips: [],
+      subtitles: [],
+    }
+    const state = createInitialEditorState({
+      timelines: [timeline],
+      activeTimelineId: 'timeline-1',
+      assets: [],
+      bins: {},
+    })
+
+    const nextState = addFilterClip(state, {
+      filterId: 'vintage-kodachrome',
+      trackIndex: 0, // Dropped on track 0 / main video
+    })
+
+    const clips = selectClips(nextState)
+    expect(clips[0].trackIndex).toBe(1) // Redirected to V2 layer on top
+  })
+
+  it('creates a new topmost track if the existing overlay track is already occupied', () => {
+    const timeline = {
+      id: 'timeline-1',
+      name: 'Main Timeline',
+      createdAt: Date.now(),
+      tracks: [
+        { id: 'v1', kind: 'video' as const, name: 'V1', locked: false, muted: false },
+        { id: 'v2', kind: 'video' as const, name: 'V2', locked: false, muted: false },
+      ],
+      clips: [
+        {
+          id: 'clip-1',
+          type: 'video' as const,
+          startTime: 0,
+          duration: 5,
+          trimStart: 0,
+          trimEnd: 0,
+          speed: 1,
+          reversed: false,
+          muted: false,
+          volume: 1,
+          trackIndex: 1, // V2 is occupied
+          assetId: 'a1',
+        },
+      ],
+      subtitles: [],
+    }
+    const state = createInitialEditorState({
+      timelines: [timeline as any],
+      activeTimelineId: 'timeline-1',
+      assets: [],
+      bins: {},
+    })
+
+    const nextState = addFilterClip(state, {
+      filterId: 'golden-hour',
+    })
+
+    const tracks = selectTracks(nextState)
+    expect(tracks.length).toBe(3) // Created V3 on top
+    const filterClip = selectClips(nextState).find(c => c.type === 'adjustment')
+    expect(filterClip?.trackIndex).toBe(2) // Placed on V3 (index 2)
   })
 })

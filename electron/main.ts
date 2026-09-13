@@ -1,6 +1,6 @@
 import './app-paths'
 import { app } from 'electron'
-import { resolveAppUserModelId } from './app-identity'
+import { APP_USER_MODEL_ID } from './app-identity'
 import { setupCSP } from './csp'
 import { registerExportHandlers } from './export/export-handler'
 import { findFfmpegPath, stopExportProcess } from './export/ffmpeg-utils'
@@ -13,6 +13,7 @@ import { registerVideoProcessingHandlers } from './ipc/video-processing-handlers
 import { registerEventTestHandlers } from './ipc/event-emitter'
 import { registerEditPilotHandlers } from './ipc/editpilot-handlers'
 import { registerWhisperHandlers } from './ipc/whisper-handlers'
+import { registerTemplateHandlers } from './ipc/template-handlers'
 import { logger } from './logger'
 import { initSessionLog } from './logging-management'
 import { checkForUpdatesOnStartup } from './updater'
@@ -31,9 +32,10 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
-  // See app-identity.ts: the id decides which icon the taskbar button draws.
+  // Windows groups taskbar buttons by AppUserModelID. Claiming the app's ID
+  // binds the taskbar button directly to the registered app identity and its icon.
   if (process.platform === 'win32') {
-    app.setAppUserModelId(resolveAppUserModelId(app.isPackaged))
+    app.setAppUserModelId(APP_USER_MODEL_ID)
   }
 
   initSessionLog()
@@ -48,6 +50,7 @@ if (!gotLock) {
   registerEventTestHandlers()
   registerEditPilotHandlers()
   registerWhisperHandlers()
+  registerTemplateHandlers()
 
   app.on('second-instance', () => {
     const mainWindow = getMainWindow()

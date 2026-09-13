@@ -1,4 +1,5 @@
 import type { Timeline } from './project-model'
+import { hasKeyframesForProperty } from './keyframes'
 
 export interface ComplexSegment {
   id: string
@@ -71,6 +72,12 @@ export function findComplexSegments(timeline: Timeline): ComplexSegment[] {
     }
     if (clip.blendMode && clip.blendMode !== 'normal') {
       rawIntervals.push({ start, end, reason: 'blendmode' })
+    }
+    if (typeof clip.speed === 'number' && (clip.speed > 1.25 || clip.speed < 0.8)) {
+      rawIntervals.push({ start, end, reason: 'speed' })
+    }
+    if (hasKeyframesForProperty(clip, 'speed')) {
+      rawIntervals.push({ start, end, reason: 'speed_ramp' })
     }
   }
 

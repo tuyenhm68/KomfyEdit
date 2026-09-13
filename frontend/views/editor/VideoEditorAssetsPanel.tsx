@@ -6,6 +6,7 @@ import {
   X, Trash2, Music, Layers, Video, Image,
   LayoutGrid, List, ArrowUpDown, Pencil,
   CirclePlus, Plus, Loader2, Check,
+  Volume2, Play,
 } from 'lucide-react'
 import { shallow } from 'zustand/vanilla/shallow'
 import { createAssetBinId, type Asset } from '../../types/project-model'
@@ -16,7 +17,14 @@ import { AssetContextMenu } from './AssetContextMenu'
 import { pathToFileUrl } from '../../lib/file-url'
 import { hasMediaFiles, isExternalFileDrag } from './external-file-drop'
 import type { AssetListFilters } from './editor-state'
-import { equalAssetBins, selectAssetBins, selectAssets, selectVisibleAssets } from './editor-selectors'
+import {
+  equalAssetBins,
+  selectAssetBins,
+  selectAssets,
+  selectVisibleAssets,
+  selectPreviewAssetId,
+  selectPreviewAsset,
+} from './editor-selectors'
 import { useEditorActions, useEditorStore } from './editor-store'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useProxyStore } from './proxy-store'
@@ -99,6 +107,11 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
   const actions = useEditorActions()
 
   const assets = useEditorStore(selectAssets)
+
+  const previewAssetId = useEditorStore(selectPreviewAssetId)
+  const previewAsset = useEditorStore(selectPreviewAsset)
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null)
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false)
 
   const [creatingBin, setCreatingBin] = useState(false)
   const [renamingBinId, setRenamingBinId] = useState<string | null>(null)
@@ -186,6 +199,130 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
     // Add puts the asset in front of the existing edit on V1, CapCut-style.
     actions.insertAssetsToTimeline({ assets: [asset], trackIndex, startTime, position: 'start' })
   }, [actions])
+
+  // Auto-play audio when an audio asset is previewed; stop when deselected/changed
+  useEffect(() => {
+    if (previewAsset && previewAsset.type === 'audio' && previewAsset.path) {
+      if (audioPreviewRef.current) {
+        audioPreviewRef.current.pause()
+        audioPreviewRef.current.src = ''
+      }
+      const audio = new Audio(pathToFileUrl(previewAsset.path))
+      audioPreviewRef.current = audio
+      audio.play().then(() => {
+        setIsAudioPlaying(true)
+      }).catch(err => {
+        console.warn('[AssetsPanel] Audio preview play failed:', err)
+        setIsAudioPlaying(false)
+      })
+      audio.onended = () => {
+        setIsAudioPlaying(false)
+      }
+      return () => {
+        audio.pause()
+        audio.src = ''
+        audioPreviewRef.current = null
+        setIsAudioPlaying(false)
+      }
+    } else {
+      if (audioPreviewRef.current) {
+        audioPreviewRef.current.pause()
+        audioPreviewRef.current.src = ''
+        audioPreviewRef.current = null
+      }
+      setIsAudioPlaying(false)
+    }
+  }, [previewAsset?.id, previewAsset?.type, previewAsset?.path])
+
+  // Support toggling audio preview playback via Spacebar
+  useEffect(() => {
+    const handleToggle = () => {
+      if (audioPreviewRef.current) {
+        if (audioPreviewRef.current.paused) {
+          audioPreviewRef.current.play().then(() => setIsAudioPlaying(true)).catch(() => {})
+        } else {
+          audioPreviewRef.current.pause()
+          setIsAudioPlaying(false)
+        }
+      }
+    }
+    window.addEventListener('komfyedit:toggle-asset-preview-playback', handleToggle)
+    return () => window.removeEventListener('komfyedit:toggle-asset-preview-playback', handleToggle)
+  }, [])
+
+  // Dismiss preview on outside click or Escape key
+  useEffect(() => {
+    if (!previewAssetId) return
+
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+
+      // Ignore clicks within any asset card, context menu, or monitor video preview
+      if (target.closest('[data-asset-card]') || target.closest('[data-asset-context-menu]')) {
+        return
+      }
+      if (target.closest('[data-source-video-preview]')) {
+        return
+      }
+
+      // Click is outside: clear preview
+      actions.setPreviewAssetId(null)
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        actions.setPreviewAssetId(null)
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown, true)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, true)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [previewAssetId, actions])
+
+  const handleAssetClick = useCallback((e: React.MouseEvent, asset: Asset) => {
+    e.stopPropagation()
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedAssetIds(prev => {
+        const next = new Set(prev)
+        if (next.has(asset.id)) next.delete(asset.id)
+        else next.add(asset.id)
+        return next
+      })
+      return
+    }
+    if (e.shiftKey && selectedAssetIds.size > 0) {
+      const lastId = [...selectedAssetIds].pop()
+      const lastIdx = filteredAssets.findIndex(a => a.id === lastId)
+      const thisIdx = filteredAssets.findIndex(a => a.id === asset.id)
+      if (lastIdx >= 0 && thisIdx >= 0) {
+        const start = Math.min(lastIdx, thisIdx)
+        const end = Math.max(lastIdx, thisIdx)
+        const next = new Set(selectedAssetIds)
+        for (let i = start; i <= end; i++) next.add(filteredAssets[i].id)
+        setSelectedAssetIds(next)
+      }
+      return
+    }
+
+    setSelectedAssetIds(new Set([asset.id]))
+
+    if (asset.type === 'video' || asset.type === 'audio') {
+      if (previewAssetId === asset.id) {
+        actions.setPreviewAssetId(null)
+      } else {
+        actions.setPreviewAssetId(asset.id)
+      }
+    } else {
+      if (previewAssetId) {
+        actions.setPreviewAssetId(null)
+      }
+    }
+  }, [actions, filteredAssets, previewAssetId, selectedAssetIds])
 
   const openCreateBinEditor = useCallback((assetIds?: string[]) => {
     if (assetIds) {
@@ -649,9 +786,13 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                     data-asset-card
                     data-asset-id={asset.id}
                     className={`relative group cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${
-                      selectedAssetIds.has(asset.id)
-                        ? 'border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/20'
-                        : 'border-zinc-800 hover:border-zinc-600'
+                      previewAssetId === asset.id
+                        ? asset.type === 'audio'
+                          ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-500/20'
+                          : 'border-blue-500 ring-2 ring-blue-500/50 shadow-lg shadow-blue-500/20'
+                        : selectedAssetIds.has(asset.id)
+                          ? 'border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/20'
+                          : 'border-zinc-800 hover:border-zinc-600'
                     }`}
                     draggable
                     onDragStart={(e) => {
@@ -663,32 +804,7 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                       e.dataTransfer.setData('asset', JSON.stringify(asset))
                       e.dataTransfer.effectAllowed = 'copy'
                     }}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (e.ctrlKey || e.metaKey) {
-                        setSelectedAssetIds(prev => {
-                          const next = new Set(prev)
-                          if (next.has(asset.id)) next.delete(asset.id)
-                          else next.add(asset.id)
-                          return next
-                        })
-                      } else if (e.shiftKey && selectedAssetIds.size > 0) {
-                        const lastId = [...selectedAssetIds].pop()
-                        const lastIdx = filteredAssets.findIndex(a => a.id === lastId)
-                        const thisIdx = filteredAssets.findIndex(a => a.id === asset.id)
-                        if (lastIdx >= 0 && thisIdx >= 0) {
-                          const start = Math.min(lastIdx, thisIdx)
-                          const end = Math.max(lastIdx, thisIdx)
-                          const next = new Set(selectedAssetIds)
-                          for (let i = start; i <= end; i++) next.add(filteredAssets[i].id)
-                          setSelectedAssetIds(next)
-                        }
-                      } else if (selectedAssetIds.has(asset.id) && selectedAssetIds.size === 1) {
-                        setSelectedAssetIds(new Set())
-                      } else {
-                        setSelectedAssetIds(new Set([asset.id]))
-                      }
-                    }}
+                    onClick={(e) => handleAssetClick(e, asset)}
                     onDoubleClick={(e) => {
                       e.stopPropagation()
                       addClipToTimeline(asset, 0)
@@ -708,20 +824,51 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                         <div className="absolute top-0 left-0 bottom-0 w-[3px] z-10" style={{ backgroundColor: cl.color }} />
                       </>
                     )}
+                    {previewAssetId === asset.id && (
+                      <div className="absolute top-1.5 left-1.5 z-20 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm border border-white/20 text-[10px] font-medium shadow pointer-events-none">
+                        {asset.type === 'audio' ? (
+                          <>
+                            <Volume2 className="w-3 h-3 text-emerald-400 animate-pulse" />
+                            <span className="text-emerald-300">Đang phát</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-2.5 h-2.5 fill-blue-400 text-blue-400" />
+                            <span className="text-blue-300">Xem trước</span>
+                          </>
+                        )}
+                      </div>
+                    )}
                     {asset.type === 'video' ? (
                       <VideoThumbnailCard
                         videoUrl={pathToFileUrl(asset.path)}
                         thumbnailUrl={asset.smallThumbnailPath ? pathToFileUrl(asset.smallThumbnailPath) : undefined}
                       />
                     ) : asset.type === 'audio' ? (
-                      <div className="w-full aspect-video bg-gradient-to-br from-emerald-900/60 to-zinc-900 flex flex-col items-center justify-center gap-1.5">
-                        <Music className="h-6 w-6 text-emerald-400" />
+                      <div className={`w-full aspect-video flex flex-col items-center justify-center gap-1.5 transition-colors ${
+                        previewAssetId === asset.id
+                          ? 'bg-gradient-to-br from-emerald-800/80 via-emerald-950/90 to-zinc-900'
+                          : 'bg-gradient-to-br from-emerald-900/60 to-zinc-900'
+                      }`}>
+                        {previewAssetId === asset.id && isAudioPlaying ? (
+                          <Volume2 className="h-6 w-6 text-emerald-300 animate-bounce" />
+                        ) : (
+                          <Music className="h-6 w-6 text-emerald-400" />
+                        )}
                         <div className="flex items-center gap-0.5">
                           {[3, 5, 8, 6, 9, 4, 7, 5, 3, 6, 8, 4].map((h, i) => (
                             <div
                               key={i}
-                              className="w-0.5 rounded-full bg-emerald-500/60"
-                              style={{ height: `${h * 1.5}px` }}
+                              className={`w-0.5 rounded-full transition-all duration-150 ${
+                                previewAssetId === asset.id && isAudioPlaying
+                                  ? 'bg-emerald-400 animate-pulse'
+                                  : 'bg-emerald-500/60'
+                              }`}
+                              style={{
+                                height: previewAssetId === asset.id && isAudioPlaying
+                                  ? `${Math.max(4, h * (1 + (i % 3) * 0.4)) * 1.5}px`
+                                  : `${h * 1.5}px`
+                              }}
                             />
                           ))}
                         </div>
@@ -855,9 +1002,13 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                     data-asset-card
                     data-asset-id={asset.id}
                     className={`group flex items-center gap-1 px-2 py-1 cursor-pointer transition-all ${
-                      selectedAssetIds.has(asset.id)
-                        ? 'bg-blue-600/20 ring-1 ring-blue-500/50'
-                        : 'hover:bg-zinc-800/60'
+                      previewAssetId === asset.id
+                        ? asset.type === 'audio'
+                          ? 'bg-emerald-950/50 ring-1 ring-emerald-500/60 shadow-sm'
+                          : 'bg-blue-950/50 ring-1 ring-blue-500/60 shadow-sm'
+                        : selectedAssetIds.has(asset.id)
+                          ? 'bg-blue-600/20 ring-1 ring-blue-500/50'
+                          : 'hover:bg-zinc-800/60'
                     }`}
                     draggable
                     onDragStart={(e) => {
@@ -869,32 +1020,7 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                       e.dataTransfer.setData('asset', JSON.stringify(asset))
                       e.dataTransfer.effectAllowed = 'copy'
                     }}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (e.ctrlKey || e.metaKey) {
-                        setSelectedAssetIds(prev => {
-                          const next = new Set(prev)
-                          if (next.has(asset.id)) next.delete(asset.id)
-                          else next.add(asset.id)
-                          return next
-                        })
-                      } else if (e.shiftKey && selectedAssetIds.size > 0) {
-                        const lastId = [...selectedAssetIds].pop()
-                        const lastIdx = filteredAssets.findIndex(a => a.id === lastId)
-                        const thisIdx = filteredAssets.findIndex(a => a.id === asset.id)
-                        if (lastIdx >= 0 && thisIdx >= 0) {
-                          const start = Math.min(lastIdx, thisIdx)
-                          const end = Math.max(lastIdx, thisIdx)
-                          const next = new Set(selectedAssetIds)
-                          for (let i = start; i <= end; i++) next.add(filteredAssets[i].id)
-                          setSelectedAssetIds(next)
-                        }
-                      } else if (selectedAssetIds.has(asset.id) && selectedAssetIds.size === 1) {
-                        setSelectedAssetIds(new Set())
-                      } else {
-                        setSelectedAssetIds(new Set([asset.id]))
-                      }
-                    }}
+                    onClick={(e) => handleAssetClick(e, asset)}
                     onDoubleClick={(e) => {
                       e.stopPropagation()
                       addClipToTimeline(asset, 0)
@@ -921,7 +1047,15 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                           <div className="w-full h-full bg-zinc-800" />
                         )
                       ) : asset.type === 'audio' ? (
-                        <div className="w-full h-full flex items-center justify-center bg-emerald-900/40"><Music className="h-2.5 w-2.5 text-emerald-400" /></div>
+                        <div className={`w-full h-full flex items-center justify-center ${
+                          previewAssetId === asset.id ? 'bg-emerald-800/60' : 'bg-emerald-900/40'
+                        }`}>
+                          {previewAssetId === asset.id && isAudioPlaying ? (
+                            <Volume2 className="h-3 w-3 text-emerald-300 animate-bounce" />
+                          ) : (
+                            <Music className="h-2.5 w-2.5 text-emerald-400" />
+                          )}
+                        </div>
                       ) : asset.type === 'adjustment' ? (
                         <div className="w-full h-full flex items-center justify-center bg-blue-900/30"><Layers className="h-2.5 w-2.5 text-blue-400" /></div>
                       ) : (
@@ -934,6 +1068,15 @@ export const VideoEditorAssetsPanel = forwardRef<VideoEditorAssetsPanelHandle, V
                     </div>
                     <div className="flex-1 min-w-0 flex items-center gap-1.5">
                       <p className="text-[10px] text-zinc-200 truncate leading-tight">{name}</p>
+                      {previewAssetId === asset.id && (
+                        <span className={`text-[9px] px-1 py-0.2 rounded font-medium border ${
+                          asset.type === 'audio'
+                            ? 'bg-emerald-900/60 text-emerald-300 border-emerald-500/40'
+                            : 'bg-blue-900/60 text-blue-300 border-blue-500/40'
+                        }`}>
+                          {asset.type === 'audio' ? 'Đang phát' : 'Xem trước'}
+                        </span>
+                      )}
                       {asset.type === 'video' && <AssetProxyBadge assetId={asset.id} status={asset.proxyStatus} />}
                     </div>
                     <span className="w-14 flex-shrink-0 text-center text-[9px] text-zinc-500 uppercase font-medium">{asset.type}</span>

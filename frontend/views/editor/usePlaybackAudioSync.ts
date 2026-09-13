@@ -191,20 +191,23 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
           const track = currentTracks[clip.trackIndex]
           const isSoloMuted = anySoloed && !track?.solo
           const hasSpeedRamp = hasKeyframesForProperty(clip, 'speed')
-          el.muted = clip.muted || track?.muted || isSoloMuted || hasSpeedRamp || false
+          const isHighSpeedAudio = (clip.speed ?? 1) > 4 || (clip.speed ?? 1) < 0.25
+          el.muted = clip.muted || track?.muted || isSoloMuted || hasSpeedRamp || isHighSpeedAudio || false
           const timeInClip = Math.max(0, atTime - clip.startTime)
           const effectiveVolume = hasKeyframesForProperty(clip, 'volume')
             ? sampleClipAt(clip, timeInClip).volume
             : clip.volume
           applyPlaybackGain(el, effectiveVolume)
 
+          const shouldPauseAudio = clip.reversed || drive.seekDriven || isHighSpeedAudio
+
           if (!el.__audioPlaying || isNewElement) {
             const target = computeTarget(el, atTime)
             if (isNewElement || Math.abs(el.currentTime - target) > ACTIVATION_SEEK_TOLERANCE_SECONDS) {
               el.currentTime = target
             }
-            el.playbackRate = desiredRate
-            if (clip.reversed || drive.seekDriven) {
+            if (el.playbackRate !== desiredRate) el.playbackRate = desiredRate
+            if (shouldPauseAudio) {
               el.pause()
               el.__audioPlaying = false
             } else {
@@ -214,7 +217,7 @@ export function usePlaybackAudioSync(params: UsePlaybackAudioSyncParams) {
             }
           } else {
             if (el.playbackRate !== desiredRate) el.playbackRate = desiredRate
-            if (clip.reversed || drive.seekDriven) {
+            if (shouldPauseAudio) {
               if (!el.paused) el.pause()
               el.__audioPlaying = false
             } else {

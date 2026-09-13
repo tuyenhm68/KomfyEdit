@@ -26,13 +26,14 @@ export function createWindow(): BrowserWindow {
   // `process.resourcesPath` by `extraResources`, which is also
   // `<installdir>/resources` — the app path (inside the asar) is checked last,
   // for a layout that bundles it instead.
-  const iconNames = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png']
+  const iconNames = ['icon.png', 'icon.ico']
   const iconDirectories = [
     path.join(getCurrentDir(), 'resources'),
     ...(process.resourcesPath ? [process.resourcesPath] : []),
     path.join(app.getAppPath(), 'resources'),
   ]
   let appIcon: Electron.NativeImage | undefined
+  let appIconPath: string | undefined
   for (const directory of iconDirectories) {
     for (const name of iconNames) {
       const iconPath = path.join(directory, name)
@@ -44,6 +45,7 @@ export function createWindow(): BrowserWindow {
       }
       logger.info(`[icon] Loaded app icon from: ${iconPath}`)
       appIcon = candidate
+      appIconPath = iconPath
       break
     }
     if (appIcon) break
@@ -62,7 +64,7 @@ export function createWindow(): BrowserWindow {
     height: 900,
     minWidth: 1200,
     minHeight: 700,
-    icon: appIcon,
+    icon: appIconPath || appIcon,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

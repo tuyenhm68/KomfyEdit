@@ -8,8 +8,10 @@ import { findFfmpegPath, runFfmpeg, stopExportProcess } from './ffmpeg-utils'
 import { getTimelineDuration } from './timeline'
 import { buildVideoFilterGraph } from './video-filter'
 import { mixAudioToPcm } from './audio-mix'
-import { formatSupportsChapters, generateFfmetadataChapters } from './chapter-utils'
 import { handle } from '../ipc/typed-handle'
+import { formatSupportsChapters, generateFfmetadataChapters } from './chapter-utils'
+import { resolveStickerPath } from './sticker-utils'
+import { resolveSfxPath } from './sfx-utils'
 
 export interface ExportSizeEstimateParams {
   width: number
@@ -74,9 +76,20 @@ export function checkDiskSpaceForExport(dirPath: string, requiredBytes: number):
 }
 
 export function registerExportHandlers(): void {
-  handle('exportNative', async ({ clips, outputPath, codec, width, height, fps, quality, background, letterbox, subtitles, transitions, markers }) => {
+  handle('exportNative', async ({ clips: rawClips, outputPath, codec, width, height, fps, quality, background, letterbox, subtitles, transitions, markers }) => {
     const ffmpegPath = findFfmpegPath()
     if (!ffmpegPath) return { success: false, error: 'FFmpeg not found' }
+
+    const clips = rawClips.map(clip => {
+      if (clip.path && !path.isAbsolute(clip.path)) {
+        const norm = clip.path.replace(/\\/g, '/')
+        if (norm.startsWith('sfx/') || clip.type === 'audio') {
+          return { ...clip, path: resolveSfxPath(clip.path) }
+        }
+        return { ...clip, path: resolveStickerPath(clip.path) }
+      }
+      return clip
+    })
 
     try {
       validatePath(outputPath, getAllowedRoots())

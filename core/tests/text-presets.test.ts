@@ -94,6 +94,65 @@ describe('KE-701: Text Presets and Animations', () => {
       // CRITICAL: Text content MUST NOT be lost!
       expect(updated.textStyle?.text).toBe('My Custom Title Content')
     })
+
+    it('preserves existing positionX and positionY even if the preset defines different positions', () => {
+      const existingClip: TimelineClip = {
+        id: 'clip-positioned',
+        assetId: null,
+        type: 'text',
+        startTime: 0,
+        duration: 3,
+        trimStart: 0,
+        trimEnd: 0,
+        speed: 1,
+        reversed: false,
+        muted: true,
+        volume: 1,
+        trackIndex: 1,
+        asset: null,
+        flipH: false,
+        flipV: false,
+        transitionIn: { type: 'none', duration: 0 },
+        transitionOut: { type: 'none', duration: 0 },
+        colorCorrection: { brightness: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0, exposure: 0, highlights: 0, shadows: 0 },
+        transform: { scale: 100, positionX: 0, positionY: 0, rotation: 0, cropTop: 0, cropRight: 0, cropBottom: 0, cropLeft: 0 },
+        opacity: 100,
+        textStyle: {
+          text: 'Header Title',
+          fontFamily: 'Arial',
+          fontSize: 40,
+          fontWeight: 'normal',
+          fontStyle: 'normal',
+          color: '#ffffff',
+          backgroundColor: 'transparent',
+          textAlign: 'center',
+          positionX: 25,
+          positionY: 15,
+          strokeColor: 'transparent',
+          strokeWidth: 0,
+          shadowColor: 'transparent',
+          shadowBlur: 0,
+          shadowOffsetX: 0,
+          shadowOffsetY: 0,
+          letterSpacing: 0,
+          lineHeight: 1.2,
+          maxWidth: 80,
+          padding: 0,
+          borderRadius: 0,
+          opacity: 100,
+        },
+      }
+
+      // tiktok-classic defines positionX: 50, positionY: 75
+      const updatedTiktok = applyTextPreset(existingClip, 'tiktok-classic')
+      expect(updatedTiktok.textStyle?.positionX).toBe(25)
+      expect(updatedTiktok.textStyle?.positionY).toBe(15)
+
+      // lower-third defines positionX: 30, positionY: 82
+      const updatedLowerThird = applyTextPreset(existingClip, 'lower-third')
+      expect(updatedLowerThird.textStyle?.positionX).toBe(25)
+      expect(updatedLowerThird.textStyle?.positionY).toBe(15)
+    })
   })
 
   describe('Animations definition', () => {

@@ -402,6 +402,12 @@ class WhisperService {
   /**
    * Analyze transcript using OpenAI Chat Completion API (or compatible endpoint)
    * to automatically extract viral highlights and 3-second hook candidates.
+   *
+   * The Auto Highlights panel no longer comes through here — it asks the CLI
+   * configured in EditPilot and says so when there is none, rather than
+   * reaching for a second provider the user never chose. This remains for the
+   * `extract_highlights` MCP tool, whose caller is an agent on the other side
+   * of the bridge and has no CLI of its own to borrow.
    */
   async analyzeHighlightsWithLlm(params: {
     transcriptText: string

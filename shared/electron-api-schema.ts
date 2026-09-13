@@ -11,6 +11,7 @@ import {
 } from '../core/src/editpilot-agents'
 import { keyframeTrackSchema, clipMaskSchema, chromaKeySchema } from '../core/src/project-model'
 import { WHISPER_PROGRESS_STEPS } from '../core/src/whisper-types'
+import { komfyTemplateSchema } from '../core/src/template-model'
 
 const fileFilter = z.object({ name: z.string(), extensions: z.array(z.string()) })
 
@@ -739,6 +740,88 @@ export const electronAPISchemas = {
           startTime: z.number(),
           endTime: z.number(),
         }).optional(),
+      })).optional(),
+      error: z.string().optional(),
+    }),
+  },
+  /*
+   * Template library. The presets folder travels with every call because the
+   * renderer owns settings; main keeps no copy that could go stale.
+   */
+  templateList: {
+    input: z.object({ presetsDir: z.string().optional() }),
+    output: z.object({
+      templatesDir: z.string(),
+      templates: z.array(z.object({
+        fileName: z.string(),
+        id: z.string(),
+        name: z.string(),
+        createdAt: z.number(),
+        width: z.number(),
+        height: z.number(),
+        durationSec: z.number(),
+        slotCount: z.number(),
+        category: z.string().default(''),
+        coverPath: z.string().optional(),
+        /** Ships with the app: read-only, and not on disk at all. */
+        builtin: z.boolean().default(false),
+      })),
+    }),
+  },
+  templateRead: {
+    input: z.object({ presetsDir: z.string().optional(), fileName: z.string() }),
+    output: z.object({
+      success: z.boolean(),
+      template: komfyTemplateSchema.optional(),
+      error: z.string().optional(),
+    }),
+  },
+  templateSave: {
+    input: z.object({
+      presetsDir: z.string().optional(),
+      template: komfyTemplateSchema,
+      /** Files to copy in beside the document — the music bed, an overlay. */
+      media: z.array(z.object({
+        sourcePath: z.string(),
+        fileName: z.string(),
+      })).default([]),
+      /** A frame to photograph for the card, from the footage being saved. */
+      cover: z.object({
+        videoPath: z.string(),
+        seekTime: z.number(),
+      }).optional(),
+    }),
+    output: z.object({
+      success: z.boolean(),
+      fileName: z.string().optional(),
+      path: z.string().optional(),
+      error: z.string().optional(),
+    }),
+  },
+  templateDelete: {
+    input: z.object({ presetsDir: z.string().optional(), fileName: z.string() }),
+    output: z.object({ success: z.boolean(), error: z.string().optional() }),
+  },
+  /**
+   * What to show over each stretch of talking. The spots and their timings are
+   * worked out in the renderer; only the judgement about content is asked of
+   * the CLI, so nothing here decides where a cutaway goes.
+   */
+  brollSuggest: {
+    input: z.object({
+      spots: z.array(z.object({
+        startTime: z.number(),
+        endTime: z.number(),
+        contextText: z.string(),
+      })).min(1),
+    }),
+    output: z.object({
+      success: z.boolean(),
+      agentLabel: z.string().optional(),
+      suggestions: z.array(z.object({
+        index: z.number(),
+        suggestedPrompt: z.string(),
+        keywords: z.array(z.string()),
       })).optional(),
       error: z.string().optional(),
     }),

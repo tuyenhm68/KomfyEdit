@@ -68,21 +68,29 @@ export function FiltersLibrary() {
     })
   }, [])
 
-  // Find target clip(s) to apply or add as an adjustment filter clip
+  // Add as an adjustment filter layer on top, or switch filter on currently selected adjustment clip
   const applyFilter = useCallback((filter: FilterDefinition, forceNewTrack = false) => {
     const state = getState()
     const currentSelectedIds = Array.from(selectSelectedClipIds(state))
+    const clips = selectClips(state)
 
-    // 1. If clips are explicitly selected and not forcing new track: apply directly to them
-    if (!forceNewTrack && currentSelectedIds.length > 0) {
-      for (const clipId of currentSelectedIds) {
-        actions.setClipFilter(clipId, filter.id, filter.defaultIntensity)
+    // If an adjustment/filter clip is explicitly selected and not forcing new track: update its filter
+    if (!forceNewTrack && currentSelectedIds.length === 1) {
+      const selectedClip = clips.find(c => c.id === currentSelectedIds[0])
+      if (selectedClip && selectedClip.type === 'adjustment') {
+        actions.updateClip(selectedClip.id, {
+          filter: {
+            id: filter.id,
+            intensity: filter.defaultIntensity,
+          },
+          importedName: `Filter: ${filter.name}`,
+        })
+        setNotice(null)
+        return
       }
-      setNotice(null)
-      return
     }
 
-    // 2. CapCut style: add a filter clip to an overlay track starting at 00:00!
+    // Default (CapCut / Premiere style): add a filter clip on the topmost overlay layer
     actions.addFilterClip({
       filterId: filter.id,
       intensity: filter.defaultIntensity,

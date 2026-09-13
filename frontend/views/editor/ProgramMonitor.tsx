@@ -2,7 +2,7 @@ import React from 'react'
 import {
   Layers, Video, Menu, ZoomIn,
   ChevronLeft, ChevronRight, Pause, Play,
-  Expand, Shrink, Pipette, Shield,
+  Expand, Shrink, Pipette, Shield, X,
 } from 'lucide-react'
 import { Tooltip } from '../../components/ui/tooltip'
 import { AudioWaveform } from '../../components/AudioWaveform'
@@ -11,7 +11,7 @@ import { DEFAULT_SUBTITLE_STYLE } from '../../types/project-model'
 import type { Asset, TimelineClip, TimelineTransition, Track, SubtitleClip } from '../../types/project-model'
 import { transitionLayerStyles } from '@core/transition-styles'
 import { getEffectiveTimelineDimensions } from '@core/video-resolution'
-import { sampleClipAt, hasKeyframes, hasKeyframesForProperty, computeMediaTimeFromTimelineTime } from '@core/keyframes'
+import { sampleClipAt, hasKeyframesForProperty, computeMediaTimeFromTimelineTime } from '@core/keyframes'
 import { getClipEffectStyles, getTransitionBgColor, formatTime, getShortcutLabel, tooltipLabel, resolveEffectiveClipFilter } from './video-editor-utils'
 import { LutCanvas, type LutCanvasRef } from './preview/LutCanvas'
 import type { KeyboardLayout } from '../../lib/keyboard-shortcuts'
@@ -22,12 +22,13 @@ import {
   selectClips,
   selectCropMode,
   selectCurrentTime,
+  selectContentDuration,
   selectEyedropperMode,
   selectIsPlaying,
   selectMaskMode,
+  selectPreviewAsset,
   selectSelectedClipForProperties,
   selectSelectedClipIds,
-  selectShowPropertiesPanel,
   selectSubtitles,
   selectTotalDuration,
   selectTracks,
@@ -36,7 +37,8 @@ import { TransformBoundingBox } from './preview/TransformBoundingBox'
 import { clipScreenBox } from '@core/video-editor-utils'
 import { playbackDriveModeForSpeed } from '@core/clip-speed'
 import { MaskBoundingBox } from './preview/MaskBoundingBox'
-import { useEditorActions, useEditorStore } from './editor-store'
+import { TextBoundingBox } from './preview/TextBoundingBox'
+import { useEditorActions, useEditorGetState, useEditorStore } from './editor-store'
 import { useRenderCacheStore } from './render-cache-store'
 
 type MonitorRenderMode = 'playback' | 'scrub'
@@ -214,8 +216,8 @@ function getClipTargetTime(clip: TimelineClip, mediaDuration: number, atTime: nu
   }
 
   return clip.reversed
-    ? Math.max(0, Math.min(mediaDuration, clip.trimStart + usableMediaDuration - timeInClip * clip.speed))
-    : Math.max(0, Math.min(mediaDuration, clip.trimStart + timeInClip * clip.speed))
+    ? Math.max(0, Math.min(mediaDuration, clip.trimStart + usableMediaDuration - timeInClip * (clip.speed ?? 1)))
+    : Math.max(0, Math.min(mediaDuration, clip.trimStart + timeInClip * (clip.speed ?? 1)))
 }
 
 function getTopVisibleClipAtTime(mediaClips: TimelineClip[], tracks: Track[], time: number): TimelineClip | null {
@@ -477,20 +479,30 @@ function getActiveAdjustmentEffects(adjustmentClips: TimelineClip[], tracks: Tra
 }
 
 function deriveFrameRenderState(cache: FrameRenderCache, tracks: Track[], time: number): FrameRenderState {
-  const dissolve = getTransitionAtTime(cache.mediaClips, cache.transitions, tracks, time)
+  let sampleTime = time
+  let maxEnd = 0
+  for (const c of cache.mediaClips) if (c.startTime + c.duration > maxEnd) maxEnd = c.startTime + c.duration
+  for (const c of cache.textClips) if (c.startTime + c.duration > maxEnd) maxEnd = c.startTime + c.duration
+  for (const c of cache.stickerClips) if (c.startTime + c.duration > maxEnd) maxEnd = c.startTime + c.duration
+  for (const s of cache.subtitles) if (s.endTime > maxEnd) maxEnd = s.endTime
+  if (maxEnd > 0 && sampleTime >= maxEnd) {
+    sampleTime = Math.max(0, maxEnd - 0.001)
+  }
+
+  const dissolve = getTransitionAtTime(cache.mediaClips, cache.transitions, tracks, sampleTime)
   // Inside a transition the pair decides the two layers, not "topmost clip".
   // The clips genuinely overlap now, so the plain test picks the *incoming*
   // one as active — and the outgoing clip, which the effect is supposed to
   // reveal from under, would never get drawn at all.
-  const activeClip = dissolve?.pair.outgoing ?? getTopVisibleClipAtTime(cache.mediaClips, tracks, time)
-  const compositingStack = getCompositingStack(cache.mediaClips, tracks, activeClip, time)
+  const activeClip = dissolve?.pair.outgoing ?? getTopVisibleClipAtTime(cache.mediaClips, tracks, sampleTime)
+  const compositingStack = getCompositingStack(cache.mediaClips, tracks, activeClip, sampleTime)
   const adjustmentSources = cache.adjustmentClips.filter(clip =>
     tracks[clip.trackIndex]?.enabled !== false && clip.filter,
   )
 
   const incomingClip = dissolve?.pair.incoming ?? null
   const incomingFilter = incomingClip
-    ? resolveEffectiveClipFilter(incomingClip, adjustmentSources, tracks, Math.max(0, time - incomingClip.startTime))
+    ? resolveEffectiveClipFilter(incomingClip, adjustmentSources, tracks, Math.max(0, sampleTime - incomingClip.startTime))
     : undefined
 
   const compositingFilters: Record<string, TimelineClip['filter']> = {}
@@ -499,7 +511,7 @@ function deriveFrameRenderState(cache: FrameRenderCache, tracks: Track[], time: 
       clip,
       adjustmentSources,
       tracks,
-      Math.max(0, time - clip.startTime),
+      Math.max(0, sampleTime - clip.startTime),
     )
   }
 
@@ -510,17 +522,17 @@ function deriveFrameRenderState(cache: FrameRenderCache, tracks: Track[], time: 
     crossDissolveProgress: dissolve?.progress ?? 0,
     crossDissolveType: dissolve?.type ?? 'dissolve',
     compositingStack,
-    activeTextClips: getActiveOverlayClips(cache.textClips, tracks, time),
-    activeStickerClips: getActiveOverlayClips(cache.stickerClips, tracks, time),
-    activeSubtitles: getActiveSubtitles(cache.subtitles, tracks, time),
-    activeLetterbox: getActiveLetterbox(cache.adjustmentClips, tracks, time),
-    activeAdjustmentEffects: getActiveAdjustmentEffects(cache.adjustmentClips, tracks, time),
-    activeFilter: activeClip ? resolveEffectiveClipFilter(activeClip, adjustmentSources, tracks, Math.max(0, time - activeClip.startTime)) : undefined,
+    activeTextClips: getActiveOverlayClips(cache.textClips, tracks, sampleTime),
+    activeStickerClips: getActiveOverlayClips(cache.stickerClips, tracks, sampleTime),
+    activeSubtitles: getActiveSubtitles(cache.subtitles, tracks, sampleTime),
+    activeLetterbox: getActiveLetterbox(cache.adjustmentClips, tracks, sampleTime),
+    activeAdjustmentEffects: getActiveAdjustmentEffects(cache.adjustmentClips, tracks, sampleTime),
+    activeFilter: activeClip ? resolveEffectiveClipFilter(activeClip, adjustmentSources, tracks, Math.max(0, sampleTime - activeClip.startTime)) : undefined,
     incomingFilter,
     compositingFilters,
     activeAdjustmentSources: adjustmentSources,
-    audioOnlyClips: cache.audioClips.filter(clip => time >= clip.startTime && time < clip.startTime + clip.duration),
-    activeVideoContributors: getActiveVideoContributors(activeClip, dissolve?.pair ?? null, dissolve?.progress ?? 0, compositingStack, time),
+    audioOnlyClips: cache.audioClips.filter(clip => sampleTime >= clip.startTime && sampleTime < clip.startTime + clip.duration),
+    activeVideoContributors: getActiveVideoContributors(activeClip, dissolve?.pair ?? null, dissolve?.progress ?? 0, compositingStack, sampleTime),
   }
 }
 
@@ -636,6 +648,8 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     play,
     selectClip,
     setClipTextPosition,
+    setClipTextStyleField,
+    deleteClips,
     setCurrentTime,
     setShowPropertiesPanel,
     stepCurrentTime,
@@ -646,12 +660,53 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     setClipMask,
     setEyedropperMode,
     setClipChromaKey,
+    setPreviewAssetId,
   } = useEditorActions()
 
   const currentTime = useEditorStore(selectCurrentTime)
   const totalDuration = useEditorStore(selectTotalDuration)
+  const contentDuration = useEditorStore(selectContentDuration)
+  const getEditorState = useEditorGetState()
   const isPlaying = useEditorStore(selectIsPlaying)
   const assets = useEditorStore(selectAssets)
+  const previewAsset = useEditorStore(selectPreviewAsset)
+  const isPreviewingVideo = Boolean(previewAsset && previewAsset.type === 'video')
+  const [sourceVideoDimensions, setSourceVideoDimensions] = React.useState<{ width: number; height: number } | null>(null)
+  const [previewVideoPlaying, setPreviewVideoPlaying] = React.useState(true)
+  const [previewVideoCurrentTime, setPreviewVideoCurrentTime] = React.useState(0)
+  const [previewVideoDuration, setPreviewVideoDuration] = React.useState(0)
+  const previewVideoRef = React.useRef<HTMLVideoElement | null>(null)
+
+  React.useEffect(() => {
+    if (previewAsset && previewAsset.type === 'video') {
+      if (previewAsset.width && previewAsset.height) {
+        setSourceVideoDimensions({ width: previewAsset.width, height: previewAsset.height })
+      } else {
+        setSourceVideoDimensions(null)
+      }
+      setPreviewVideoPlaying(true)
+      setPreviewVideoCurrentTime(0)
+      setPreviewVideoDuration(previewAsset.duration || 0)
+    } else {
+      setSourceVideoDimensions(null)
+      setPreviewVideoPlaying(false)
+    }
+  }, [previewAsset?.id, previewAsset?.type, previewAsset?.width, previewAsset?.height, previewAsset?.duration])
+
+  React.useEffect(() => {
+    const handleToggle = () => {
+      if (!isPreviewingVideo || !previewVideoRef.current) return
+      if (previewVideoRef.current.paused) {
+        previewVideoRef.current.play().then(() => setPreviewVideoPlaying(true)).catch(() => {})
+      } else {
+        previewVideoRef.current.pause()
+        setPreviewVideoPlaying(false)
+      }
+    }
+    window.addEventListener('komfyedit:toggle-asset-preview-playback', handleToggle)
+    return () => window.removeEventListener('komfyedit:toggle-asset-preview-playback', handleToggle)
+  }, [isPreviewingVideo])
+
   const clips = useEditorStore(selectClips)
   const tracks = useEditorStore(selectTracks)
   const subtitles = useEditorStore(selectSubtitles)
@@ -666,14 +721,13 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const cropMode = useEditorStore(selectCropMode)
   const maskMode = useEditorStore(selectMaskMode)
   const eyedropperMode = useEditorStore(selectEyedropperMode)
-  const showPropertiesPanel = useEditorStore(selectShowPropertiesPanel)
   const activeTimeline = useEditorStore(selectActiveTimeline)
   const activeTimelineName = activeTimeline?.name ?? ''
   const activeTimelineFps = activeTimeline?.fps
   const fps = activeTimelineFps ?? settings.defaultFps ?? 30
   const timecodeFormat = settings.timecodeFormat ?? 'timecode'
 
-  // Press 'C' to toggle Crop mode for selected visual clip, Esc to exit crop / eyedropper
+  // Press 'C' to toggle Crop mode for selected visual clip, Esc to exit crop / eyedropper / preview
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement
@@ -695,12 +749,16 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
           e.preventDefault()
           setEyedropperMode(false)
         }
+        if (isPreviewingVideo) {
+          e.preventDefault()
+          setPreviewAssetId(null)
+        }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [cropMode, eyedropperMode, selectedClip, setCropMode, setEyedropperMode, toggleCropMode])
+  }, [cropMode, eyedropperMode, isPreviewingVideo, selectedClip, setCropMode, setEyedropperMode, setPreviewAssetId, toggleCropMode])
 
   const effectiveDimensions = React.useMemo(() => {
     return getEffectiveTimelineDimensions(activeTimeline, assets, fps)
@@ -769,6 +827,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
   const [playbackResOpen, setPlaybackResOpen] = React.useState(false)
   const [playbackResolution, setPlaybackResolution] = React.useState<1 | 0.5 | 0.25>(0.5)
   const [videoFrameSize, setVideoFrameSize] = React.useState<{ width: number; height: number }>({ width: 0, height: 0 })
+  const [sourceVideoFrameSize, setSourceVideoFrameSize] = React.useState<{ width: number; height: number }>({ width: 0, height: 0 })
   const [showSafeZoneGuide, setShowSafeZoneGuide] = React.useState(false)
 
   React.useEffect(() => {
@@ -780,25 +839,41 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
       const cw = rect.width
       const ch = rect.height
       if (cw <= 0 || ch <= 0) return
-
-      const targetRatio = effectiveDimensions.aspectRatio || 16 / 9
       const containerRatio = cw / ch
 
-      let fw: number
-      let fh: number
-      if (containerRatio > targetRatio) {
-        fh = ch
-        fw = ch * targetRatio
+      // Timeline frame dimensions (always follows timeline resolution / ratio)
+      const timelineRatio = effectiveDimensions.aspectRatio || 16 / 9
+      let tfw: number
+      let tfh: number
+      if (containerRatio > timelineRatio) {
+        tfh = ch
+        tfw = ch * timelineRatio
       } else {
-        fw = cw
-        fh = cw / targetRatio
+        tfw = cw
+        tfh = cw / timelineRatio
       }
+      const tw = Math.round(tfw)
+      const th = Math.round(tfh)
+      setVideoFrameSize(prev => (prev.width === tw && prev.height === th ? prev : { width: tw, height: th }))
 
-      const width = Math.round(fw)
-      const height = Math.round(fh)
-      // Guard the identity: the ResizeObserver fires on every layout tick, and
-      // a fresh object each time would re-render the whole monitor for nothing.
-      setVideoFrameSize(prev => (prev.width === width && prev.height === height ? prev : { width, height }))
+      // Source video preview dimensions (always follows raw asset ratio)
+      if (isPreviewingVideo) {
+        const sourceRatio = sourceVideoDimensions
+          ? sourceVideoDimensions.width / sourceVideoDimensions.height
+          : (previewAsset?.width && previewAsset?.height ? previewAsset.width / previewAsset.height : 16 / 9)
+        let sfw: number
+        let sfh: number
+        if (containerRatio > sourceRatio) {
+          sfh = ch
+          sfw = ch * sourceRatio
+        } else {
+          sfw = cw
+          sfh = cw / sourceRatio
+        }
+        const sw = Math.round(sfw)
+        const sh = Math.round(sfh)
+        setSourceVideoFrameSize(prev => (prev.width === sw && prev.height === sh ? prev : { width: sw, height: sh }))
+      }
     }
 
     updateFrameSize()
@@ -811,7 +886,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     return () => {
       observer.disconnect()
     }
-  }, [effectiveDimensions.aspectRatio])
+  }, [effectiveDimensions.aspectRatio, isPreviewingVideo, sourceVideoDimensions, previewAsset?.width, previewAsset?.height])
   const timelineTransitions = useEditorStore(
     state => selectActiveTimeline(state)?.transitions ?? EMPTY_TRANSITIONS,
   )
@@ -970,7 +1045,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
 
     const currentSpeed = hasKeyframesForProperty(clip, 'speed')
       ? sampleClipAt(clip, Math.max(0, atTime - clip.startTime)).speed
-      : clip.speed
+      : (clip.speed ?? 1)
 
     // Past the element's rate ceiling there is no playing in real time, so the
     // clip is stepped by seeking instead. Letting it play on regardless left it
@@ -978,18 +1053,25 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     // file, which looked like another part of the video cutting in.
     const drive = playbackDriveModeForSpeed(currentSpeed)
     const shouldPause = paused || clip.reversed || drive.seekDriven
-    const driftThreshold = shouldPause ? 0.04 : 0.3
+    // Allow the browser video element to decode and play smoothly at high speeds (e.g. 10x)
+    // without triggering false drift corrections every few milliseconds.
+    const driftThreshold = shouldPause ? 0.04 : Math.max(0.4, 0.4 * currentSpeed)
 
-    video.playbackRate = clip.reversed || drive.seekDriven ? 1 : drive.rate
+    const desiredRate = clip.reversed || drive.seekDriven ? 1 : drive.rate
+    if (video.playbackRate !== desiredRate) {
+      video.playbackRate = desiredRate
+    }
+
+    const isSeeking = Boolean(video.seeking)
     if (!Number.isNaN(targetTime) && (forceSeek || Math.abs(video.currentTime - targetTime) > driftThreshold)) {
-      if (!shouldPause && typeof (video as { fastSeek?: (time: number) => void }).fastSeek === 'function' && !forceSeek) {
-        ;(video as { fastSeek: (time: number) => void }).fastSeek(targetTime)
-      } else {
-        if (forceSeek && Math.abs(video.currentTime - targetTime) < 0.001) {
-          video.currentTime = targetTime + 0.001
-        }
-        video.currentTime = targetTime
+      if (!forceSeek && isSeeking) {
+        // A seek is already in flight: do not interrupt ongoing frame decode
+        return
       }
+      if (forceSeek && Math.abs(video.currentTime - targetTime) < 0.001) {
+        video.currentTime = targetTime + 0.001
+      }
+      video.currentTime = targetTime
     }
 
     if (shouldPause) {
@@ -1684,6 +1766,21 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
     renderFrame(currentTime, 'scrub')
   }, [clips, currentTime, isPlaying, renderFrame, subtitles, tracks])
 
+  // Re-sync timeline visuals when exiting video preview mode so there is never a black screen
+  React.useEffect(() => {
+    if (!isPreviewingVideo) {
+      lastFrameRequestRef.current = null
+      renderFrame(currentTime, 'scrub')
+      requestAnimationFrame(() => {
+        lutCanvasRef.current?.renderNow()
+        const last = lastFrameRequestRef.current
+        if (last) {
+          applyFrameVisuals(last.state, last.mode)
+        }
+      })
+    }
+  }, [isPreviewingVideo, currentTime, renderFrame, applyFrameVisuals])
+
   React.useEffect(() => {
     const handler = () => setIsFullscreen(document.fullscreenElement === previewContainerRef.current)
     document.addEventListener('fullscreenchange', handler)
@@ -1869,14 +1966,20 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
             <span className="truncate text-[13px] text-zinc-100 font-medium">
               Player{activeTimelineName ? ` - ${activeTimelineName}` : ''}
             </span>
-            <button
-              type="button"
-              onClick={() => openProjectSettingsModal()}
-              className="px-1.5 py-0.5 rounded text-[11px] font-mono font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-teal-400 transition-colors border border-zinc-700/60"
-              title="Change project / timeline dimensions"
-            >
-              {effectiveDimensions.aspectRatioLabel}
-            </button>
+            {isPreviewingVideo && sourceVideoDimensions ? (
+              <span className="px-1.5 py-0.5 rounded text-[11px] font-mono font-medium bg-blue-950/80 text-blue-300 border border-blue-500/40">
+                Gốc: {sourceVideoDimensions.width}×{sourceVideoDimensions.height}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => openProjectSettingsModal()}
+                className="px-1.5 py-0.5 rounded text-[11px] font-mono font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-teal-400 transition-colors border border-zinc-700/60"
+                title="Change project / timeline dimensions"
+              >
+                {effectiveDimensions.aspectRatioLabel}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setShowSafeZoneGuide(prev => !prev)}
@@ -1906,6 +2009,11 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
           ref={previewContainerRef}
           className={`flex-1 relative overflow-hidden min-h-0 min-w-0 ${isFullscreen ? 'bg-black' : ''}`}
           style={{ backgroundColor: '#000', ...(previewZoom !== 'fit' ? { cursor: 'grab' } : {}) }}
+          onClick={(e) => {
+            if (isPreviewingVideo && !((e.target as HTMLElement).closest('[data-source-video-preview]'))) {
+              setPreviewAssetId(null)
+            }
+          }}
           onMouseDown={(e) => {
             if (previewZoom === 'fit') return
             if (e.button !== 0 && e.button !== 1) return
@@ -1921,7 +2029,7 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
           onMouseUp={() => { previewPanRef.current.dragging = false }}
           onMouseLeave={() => { previewPanRef.current.dragging = false }}
         >
-          {clips.length === 0 ? (
+          {clips.length === 0 && !isPreviewingVideo ? (
             <div className="w-full h-full flex items-center justify-center">
               <div className="text-center">
                 <div className="w-48 h-28 border-2 border-dashed border-zinc-700 rounded-lg flex flex-col items-center justify-center mb-4 mx-auto">
@@ -1939,8 +2047,80 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                 transformOrigin: 'center center',
               } : undefined}
             >
+              {/* Dedicated Source Video Preview (completely isolated from timeline overlays) */}
+              {isPreviewingVideo && previewAsset && (
+                <div
+                  data-source-video-preview
+                  className="relative bg-black overflow-hidden shadow-2xl flex items-center justify-center z-30"
+                  style={{
+                    ...(sourceVideoFrameSize.width > 0
+                      ? { width: sourceVideoFrameSize.width, height: sourceVideoFrameSize.height }
+                      : {
+                          width: '100%',
+                          aspectRatio: sourceVideoDimensions
+                            ? `${sourceVideoDimensions.width} / ${sourceVideoDimensions.height}`
+                            : `${previewAsset.width || 16} / ${previewAsset.height || 9}`,
+                        }),
+                  }}
+                >
+                  <video
+                    ref={previewVideoRef}
+                    src={pathToFileUrl(previewAsset.path)}
+                    autoPlay
+                    playsInline
+                    loop
+                    className="w-full h-full object-contain cursor-pointer"
+                    onLoadedMetadata={(e) => {
+                      const v = e.currentTarget
+                      if (v.videoWidth && v.videoHeight) {
+                        setSourceVideoDimensions({ width: v.videoWidth, height: v.videoHeight })
+                      }
+                      setPreviewVideoDuration(v.duration || previewAsset.duration || 0)
+                    }}
+                    onTimeUpdate={(e) => {
+                      setPreviewVideoCurrentTime(e.currentTarget.currentTime)
+                    }}
+                    onPlay={() => setPreviewVideoPlaying(true)}
+                    onPause={() => setPreviewVideoPlaying(false)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (previewVideoRef.current) {
+                        if (previewVideoRef.current.paused) {
+                          previewVideoRef.current.play().catch(() => {})
+                        } else {
+                          previewVideoRef.current.pause()
+                        }
+                      }
+                    }}
+                  />
+                  {/* Source Video Tag Badge with close button */}
+                  <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none z-30">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/85 border border-blue-500/50 text-blue-300 text-xs font-medium shadow-lg backdrop-blur-sm pointer-events-auto">
+                      <Video className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="truncate max-w-[220px]">{previewAsset.path.split(/[/\\]/).pop() || previewAsset.path}</span>
+                      {sourceVideoDimensions && (
+                        <span className="text-[10px] text-zinc-400 border-l border-zinc-700 pl-1.5 ml-0.5 font-mono">
+                          {sourceVideoDimensions.width}×{sourceVideoDimensions.height}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      title="Đóng xem trước (Esc)"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPreviewAssetId(null)
+                      }}
+                      className="p-1.5 rounded-md bg-black/80 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors pointer-events-auto shadow-lg cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Eyedropper active banner */}
-              {eyedropperMode && (
+              {eyedropperMode && !isPreviewingVideo && (
                 <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-600/90 text-white text-xs shadow-lg backdrop-blur-sm pointer-events-auto">
                   <Pipette className="h-3.5 w-3.5 animate-bounce" />
                   <span>Click video to sample chroma key background color (Esc to cancel)</span>
@@ -1957,8 +2137,9 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
               {/* Video frame wrapper — background with exact timeline dimensions & aspect ratio */}
               <div
                 ref={videoFrameWrapperRef}
-                className="relative bg-black overflow-hidden shadow-2xl"
+                className={`relative bg-black overflow-hidden shadow-2xl ${isPreviewingVideo ? 'hidden' : ''}`}
                 style={{
+                  display: isPreviewingVideo ? 'none' : undefined,
                   cursor: eyedropperMode ? 'crosshair' : undefined,
                   ...(videoFrameSize.width > 0
                     ? { width: videoFrameSize.width, height: videoFrameSize.height }
@@ -2285,111 +2466,48 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
                 />
               ))}
 
-              {/* Text overlay clips */}
+              {/* Text overlay clips with CapCut-style bounding box & resize/scale/width/rotate handles */}
               {activeTextClips.map(tc => {
-                const ts = tc.textStyle!
                 const isSelected = selectedClipIds.has(tc.id)
-
-                // Sample keyframe animation if available
-                const timeInClip = Math.max(0, Math.min(tc.duration, currentTime - tc.startTime))
-                const sampled = hasKeyframes(tc) ? sampleClipAt(tc, timeInClip) : null
-
-                const posX = ts.positionX + (sampled ? sampled.positionX : 0)
-                const posY = ts.positionY + (sampled ? sampled.positionY : 0)
-                const scale = sampled ? sampled.scale / 100 : 1
-                const rotation = sampled ? sampled.rotation : 0
-                const opacity = (sampled ? sampled.opacity : (ts.opacity ?? 100)) / 100
-
-                // Typewriter effect via textProgress (0..100)
-                let displayText = ts.text
-                if (sampled && sampled.textProgress < 100) {
-                  const visibleChars = Math.max(0, Math.min(ts.text.length, Math.floor((ts.text.length * sampled.textProgress) / 100)))
-                  displayText = ts.text.slice(0, visibleChars)
-                }
-
-                const transformParts = ['translate(-50%, -50%)']
-                if (scale !== 1) transformParts.push(`scale(${scale})`)
-                if (rotation !== 0) transformParts.push(`rotate(${rotation}deg)`)
-                const transform = transformParts.join(' ')
-
                 return (
-                  <div
+                  <TextBoundingBox
                     key={`text-${tc.id}`}
-                    className={`absolute z-[24] ${isSelected ? 'ring-2 ring-cyan-400/60 ring-offset-1 ring-offset-transparent' : ''}`}
-                    style={{
-                      left: `${posX}%`,
-                      top: `${posY}%`,
-                      transform,
-                      maxWidth: ts.maxWidth > 0 ? `${ts.maxWidth}%` : undefined,
-                      opacity,
-                      pointerEvents: 'auto',
-                      cursor: 'move',
-                    }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation()
+                    clip={tc}
+                    isSelected={isSelected}
+                    currentTime={currentTime}
+                    frameElement={videoFrameWrapperRef.current}
+                    onSelect={() => {
                       clickedTextOverlayRef.current = true
                       selectClip(tc.id)
-                      // Capture panel state at mousedown time so we can restore it after any
-                      // spurious onClick handlers that might close it
-                      const wasOpen = showPropertiesPanel
-                      const clipId = tc.id
-                      const container = (e.currentTarget.parentElement as HTMLElement)
-                      if (!container) return
-                      const rect = container.getBoundingClientRect()
-                      const onMove = (ev: MouseEvent) => {
-                        let px = Math.max(0, Math.min(100, ((ev.clientX - rect.left) / rect.width) * 100))
-                        let py = Math.max(0, Math.min(100, ((ev.clientY - rect.top) / rect.height) * 100))
-                        if (Math.abs(px - 50) < 1.5) px = 50
-                        if (Math.abs(py - 50) < 1.5) py = 50
-                        setClipTextPosition(tc.id, px, py)
-                      }
-                      const onUp = () => {
-                        window.removeEventListener('mousemove', onMove)
-                        window.removeEventListener('mouseup', onUp)
-                        // Reset the ref and restore state after all click events have fired
-                        requestAnimationFrame(() => {
-                          clickedTextOverlayRef.current = false
-                          selectClip(clipId)
-                          if (wasOpen) setShowPropertiesPanel(true)
-                        })
-                      }
-                      window.addEventListener('mousemove', onMove)
-                      window.addEventListener('mouseup', onUp)
                     }}
-                    onClick={(e) => e.stopPropagation()}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation()
+                    onDoubleClick={() => {
                       selectClip(tc.id)
                       setShowPropertiesPanel(true)
                     }}
-                  >
-                    <div
-                      style={{
-                        fontFamily: ts.fontFamily,
-                        fontSize: `${ts.fontSize * 0.05}vh`,
-                        fontWeight: ts.fontWeight,
-                        fontStyle: ts.fontStyle,
-                        color: ts.color,
-                        backgroundColor: ts.backgroundColor,
-                        textAlign: ts.textAlign,
-                        padding: ts.padding > 0 ? `${ts.padding * 0.04}vh` : undefined,
-                        borderRadius: ts.borderRadius > 0 ? `${ts.borderRadius}px` : undefined,
-                        letterSpacing: ts.letterSpacing !== 0 ? `${ts.letterSpacing}px` : undefined,
-                        lineHeight: ts.lineHeight,
-                        textShadow: ts.shadowBlur > 0 || ts.shadowOffsetX !== 0 || ts.shadowOffsetY !== 0
-                          ? `${ts.shadowOffsetX}px ${ts.shadowOffsetY}px ${ts.shadowBlur}px ${ts.shadowColor}`
-                          : undefined,
-                        WebkitTextStroke: ts.strokeWidth > 0 && ts.strokeColor !== 'transparent'
-                          ? `${ts.strokeWidth}px ${ts.strokeColor}`
-                          : undefined,
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        userSelect: 'none',
-                      }}
-                    >
-                      {displayText}
-                    </div>
-                  </div>
+                    onUpdatePosition={(posX, posY) => {
+                      setClipTextPosition(tc.id, posX, posY)
+                    }}
+                    onUpdateFontSize={(fontSize) => {
+                      setClipTextStyleField(tc.id, 'fontSize', fontSize)
+                    }}
+                    onUpdateMaxWidth={(maxWidth) => {
+                      setClipTextStyleField(tc.id, 'maxWidth', maxWidth)
+                    }}
+                    onUpdateRotation={(rotation) => {
+                      setClipTransform(tc.id, { rotation })
+                    }}
+                    onDelete={() => {
+                      deleteClips([tc.id])
+                    }}
+                    onInteractionStart={() => {
+                      clickedTextOverlayRef.current = true
+                    }}
+                    onInteractionEnd={() => {
+                      requestAnimationFrame(() => {
+                        clickedTextOverlayRef.current = false
+                      })
+                    }}
+                  />
                 )
               })}
 
@@ -2537,18 +2655,22 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
         {/* Transport row — keeps the player free of a scrub bar: the
             timeline below is the only scrubber, so this row is just timecode,
             play, and the view controls. */}
-        <div className="flex h-[36px] flex-shrink-0 items-center gap-2 border-t border-zinc-800 px-4">
+        <div data-source-video-preview className="flex h-[36px] flex-shrink-0 items-center gap-2 border-t border-zinc-800 px-4">
           {/* Left: current / total timecode */}
           <div className="flex flex-shrink-0 items-center gap-1.5">
             <span
               ref={playbackTimecodeRef}
               className="select-none font-mono text-[12px] tabular-nums text-accent"
             >
-              {formatTime(currentTime, fps, timecodeFormat)}
+              {isPreviewingVideo
+                ? formatTime(previewVideoCurrentTime, fps, timecodeFormat)
+                : formatTime(currentTime, fps, timecodeFormat)}
             </span>
             <span className="text-[12px] text-zinc-600">/</span>
             <span className="select-none font-mono text-[12px] tabular-nums text-zinc-400">
-              {formatTime(totalDuration, fps, timecodeFormat)}
+              {isPreviewingVideo
+                ? formatTime(previewVideoDuration, fps, timecodeFormat)
+                : formatTime(contentDuration > 0 ? contentDuration : totalDuration, fps, timecodeFormat)}
             </span>
           </div>
 
@@ -2557,23 +2679,56 @@ export const ProgramMonitor = React.forwardRef<ProgramMonitorHandle, ProgramMoni
             <Tooltip content={tooltipLabel('Step Back', getShortcutLabel(kbLayout, 'transport.stepBackward'))} side="top">
               <button
                 className="cc-icon-btn"
-                onClick={() => { pause(); stepCurrentTime(-1 / fps) }}
+                onClick={() => {
+                  if (isPreviewingVideo && previewVideoRef.current) {
+                    previewVideoRef.current.pause()
+                    previewVideoRef.current.currentTime = Math.max(0, previewVideoRef.current.currentTime - (1 / fps))
+                  } else {
+                    pause(); stepCurrentTime(-1 / fps)
+                  }
+                }}
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
             </Tooltip>
-            <Tooltip content={tooltipLabel(isPlaying ? 'Pause' : 'Play', getShortcutLabel(kbLayout, 'transport.playPause'))} side="top">
+            <Tooltip content={tooltipLabel((isPreviewingVideo ? previewVideoPlaying : isPlaying) ? 'Pause' : 'Play', getShortcutLabel(kbLayout, 'transport.playPause'))} side="top">
               <button
-                onClick={() => { if (isPlaying) pause(); else play() }}
+                onClick={() => {
+                  if (isPreviewingVideo && previewVideoRef.current) {
+                    if (previewVideoRef.current.paused) {
+                      previewVideoRef.current.play().catch(() => {})
+                    } else {
+                      previewVideoRef.current.pause()
+                    }
+                  } else {
+                    if (isPlaying) {
+                      pause()
+                    } else {
+                      const cd = selectContentDuration(getEditorState())
+                      if (cd > 0 && (currentTime >= cd - 0.04 || playbackTimeRef.current >= cd - 0.04)) {
+                        playbackTimeRef.current = 0
+                        setCurrentTime(0)
+                      }
+                      play()
+                    }
+                  }
+                }}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-100 transition-colors hover:bg-zinc-800"
               >
-                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
+                {(isPreviewingVideo ? previewVideoPlaying : isPlaying) ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
               </button>
             </Tooltip>
             <Tooltip content={tooltipLabel('Step Forward', getShortcutLabel(kbLayout, 'transport.stepForward'))} side="top">
               <button
                 className="cc-icon-btn"
-                onClick={() => { pause(); setCurrentTime(Math.min(totalDuration, currentTime + (1 / fps))) }}
+                onClick={() => {
+                  if (isPreviewingVideo && previewVideoRef.current) {
+                    previewVideoRef.current.pause()
+                    previewVideoRef.current.currentTime = Math.min(previewVideoDuration, previewVideoRef.current.currentTime + (1 / fps))
+                  } else {
+                    pause(); setCurrentTime(Math.min(contentDuration > 0 ? contentDuration : totalDuration, currentTime + (1 / fps)))
+                  }
+                }}
               >
                 <ChevronRight className="h-4 w-4" />
               </button>

@@ -15,6 +15,7 @@ import { getTimelineDuration } from './timeline'
 import { buildVideoFilterGraph } from './video-filter'
 import { mixAudioToPcm } from './audio-mix'
 import { resolveStickerPath } from './sticker-utils'
+import { resolveSfxPath } from './sfx-utils'
 import {
   estimateExportIntermediateSize,
   checkDiskSpaceForExport,
@@ -278,15 +279,19 @@ class RenderQueueManager {
 
     const { clips: rawClips, outputPath, codec, width, height, fps, quality, letterbox, subtitles, transitions } = params
 
-    // A sticker is stored as `stickers/fire.png` — relative, because the file
-    // ships inside the app rather than living in the user's project. The
-    // renderer has no filesystem to resolve that against, so it arrives here
-    // unresolved and ffmpeg would look for it next to the working directory.
-    // Only the main process knows where the packaged resources are.
-    const clips = rawClips.map(clip =>
-      clip.path && !path.isAbsolute(clip.path)
-        ? { ...clip, path: resolveStickerPath(clip.path) }
-        : clip)
+    // Stickers (`stickers/fire.png`) and sound effects (`sfx/whoosh.wav`) are
+    // stored as relative paths because they ship inside the app rather than
+    // living in the user's project. Resolve them to absolute packaged/dev paths.
+    const clips = rawClips.map(clip => {
+      if (clip.path && !path.isAbsolute(clip.path)) {
+        const norm = clip.path.replace(/\\/g, '/')
+        if (norm.startsWith('sfx/') || clip.type === 'audio') {
+          return { ...clip, path: resolveSfxPath(clip.path) }
+        }
+        return { ...clip, path: resolveStickerPath(clip.path) }
+      }
+      return clip
+    })
 
     try {
       validatePath(outputPath, getAllowedRoots())

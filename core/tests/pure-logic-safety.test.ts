@@ -401,6 +401,32 @@ describe('S1-2: Pure editing logic safety net and trap prevention', () => {
       ]
       const result = pruneEmptyOverlayTracks(tracks, [], [])
       expect(result.tracks.some(t => t.id === 'v1')).toBe(true)
+      expect(result.tracks.some(t => t.id === 'a1')).toBe(false)
+      expect(result.tracks).toHaveLength(1)
+    })
+
+    it('prunes empty audio tracks including A1 when audio clip is moved', () => {
+      const tracks: Track[] = [
+        { id: 'v1', name: 'V1', kind: 'video', muted: false, locked: false }, // 0
+        { id: 'a1', name: 'A1', kind: 'audio', muted: false, locked: false }, // 1 (empty)
+        { id: 'a2-empty', name: 'A2', kind: 'audio', muted: false, locked: false }, // 2 (empty, was previous track)
+        { id: 'a3', name: 'A3', kind: 'audio', muted: false, locked: false }, // 3 (has clip)
+      ]
+
+      const clips: TimelineClip[] = [
+        createMockClip({ id: 'c-audio', trackIndex: 3, type: 'audio', startTime: 0, duration: 5 }),
+      ]
+
+      const result = pruneEmptyOverlayTracks(tracks, clips, [])
+
+      // Both empty audio tracks a1 and a2-empty are removed, a3 becomes A1
+      expect(result.tracks.length).toBe(2)
+      expect(result.tracks.some(t => t.id === 'a1')).toBe(false)
+      expect(result.tracks.some(t => t.id === 'a2-empty')).toBe(false)
+      expect(result.tracks.find(t => t.id === 'a3')?.name).toBe('A1')
+
+      const remapped = result.clips.find(c => c.id === 'c-audio')
+      expect(remapped?.trackIndex).toBe(1)
     })
   })
 

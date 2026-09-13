@@ -3,6 +3,11 @@ import {
   buildHighlightExtractionPrompt,
   parseHighlightResponse,
 } from '../../core/src/auto-highlight'
+import {
+  BROLL_SYSTEM_INSTRUCTION,
+  buildBrollSuggestionPrompt,
+  parseBrollSuggestions,
+} from '../../core/src/broll-copilot'
 import { getAllowedRoots } from '../config'
 import { runOneShot } from '../editpilot/agent-runner'
 import { logger } from '../logger'
@@ -66,14 +71,15 @@ export function registerWhisperHandlers(): void {
   })
 
   /**
-   * Picking highlights needs a model, not a transcription service.
+   * Picking highlights needs a model, not a transcription service — and the
+   * only model here is the CLI the user configured in EditPilot.
    *
-   * The CLI the user already configured in EditPilot goes first: it is a model
-   * they are already paying for, so the feature stops needing a separate
-   * OpenAI key. The OpenAI path stays as the fallback — for no CLI installed,
-   * a CLI that fails, or a reply no JSON could be read out of — because
-   * dropping it would silently take the feature away from whoever is using it
-   * today.
+   * There is deliberately no fallback. An OpenAI path used to catch everything
+   * this one turns down, which meant a missing CLI, a broken CLI and an
+   * unreadable answer all ended the same way: a second provider quietly billed
+   * a second key, and nobody was ever told the CLI had not been used. Saying
+   * why, once, is worth more than an answer from somewhere the user did not
+   * choose.
    */
   handle('whisperExtractHighlights', async (params) => {
     if (!params.transcriptText.trim()) {
@@ -85,21 +91,47 @@ export function registerWhisperHandlers(): void {
       params.maxItems ?? 4,
     )}`
 
-    try {
-      const cli = await runOneShot({ prompt })
-      if (cli) {
-        const highlights = parseHighlightResponse(cli.text)
-        if (highlights.length > 0) {
-          logger.info(`[whisper] Highlight qua ${cli.agentLabel}: ${highlights.length} đoạn`)
-          return { success: true, highlights }
-        }
-        logger.warn(`[whisper] ${cli.agentLabel} không trả về JSON đọc được; chuyển sang OpenAI`)
-      }
-    } catch (err: any) {
-      logger.warn(`[whisper] Hỏi CLI thất bại (${err?.message}); chuyển sang OpenAI`)
+    const cli = await runOneShot({ prompt })
+    if (!cli.ok) {
+      return cli.reason === 'no-agent'
+        ? { success: false, error: 'NO_CLI' }
+        : { success: false, error: `CLI_FAILED: ${cli.agentLabel} — ${cli.detail}` }
     }
 
-    return whisperService.analyzeHighlightsWithLlm(params)
+    const highlights = parseHighlightResponse(cli.text)
+    if (highlights.length === 0) {
+      logger.warn(`[whisper] ${cli.agentLabel} không trả về JSON đọc được`)
+      return { success: false, error: `CLI_FAILED: ${cli.agentLabel}` }
+    }
+
+    logger.info(`[whisper] Highlight qua ${cli.agentLabel}: ${highlights.length} đoạn`)
+    return { success: true, highlights }
+  })
+
+  /**
+   * The content half of B-roll Copilot. The renderer has already decided where
+   * the cutaways go; this asks the configured CLI what each one should show.
+   * Same contract as highlights: the CLI or nothing, and a reason the panel can
+   * turn into an instruction the user can act on.
+   */
+  handle('brollSuggest', async ({ spots }) => {
+    const prompt = `${BROLL_SYSTEM_INSTRUCTION}\n\n${buildBrollSuggestionPrompt(spots)}`
+
+    const cli = await runOneShot({ prompt })
+    if (!cli.ok) {
+      return cli.reason === 'no-agent'
+        ? { success: false, error: 'NO_CLI' }
+        : { success: false, error: `CLI_FAILED: ${cli.agentLabel} — ${cli.detail}` }
+    }
+
+    const suggestions = parseBrollSuggestions(cli.text)
+    if (suggestions.length === 0) {
+      logger.warn(`[broll] ${cli.agentLabel} không trả về JSON đọc được`)
+      return { success: false, error: `CLI_FAILED: ${cli.agentLabel}` }
+    }
+
+    logger.info(`[broll] Gợi ý qua ${cli.agentLabel}: ${suggestions.length}/${spots.length} đoạn`)
+    return { success: true, agentLabel: cli.agentLabel, suggestions }
   })
 }
 

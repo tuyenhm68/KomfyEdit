@@ -133,7 +133,7 @@ export function qcCheck(
         trackId: tracks[clip.trackIndex]?.id,
         clipId: clip.id,
       })
-    } else if (options?.fileExists && !options.fileExists(mediaPath)) {
+    } else if (!isGeneratedClip && options?.fileExists && mediaPath && !mediaPath.startsWith('stickers/') && !mediaPath.startsWith('sfx/') && !options.fileExists(mediaPath)) {
       issues.push({
         type: 'MISSING_MEDIA',
         severity: 'error',

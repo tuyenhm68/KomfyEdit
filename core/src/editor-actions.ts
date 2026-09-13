@@ -7,6 +7,8 @@ import {
   type TranscriptSegment,
 } from './transcript-store'
 import { BROLL_TRACK_NAME } from './broll-copilot'
+import { applyTemplate, type TemplateBinding } from './template-apply'
+import type { KomfyTemplate } from './template-model'
 import type {
   Asset,
   AssetBins,
@@ -56,6 +58,7 @@ import {
   DEFAULT_STICKER_SCALE,
   DEFAULT_STICKER_PIXELS,
 } from './stickers'
+import { getSfxDefinition, resolveSfxRelativePath } from './sfx'
 import { resolveOverlaps, packMainVideoTrack, mainVideoTrackIndex, pruneEmptyTracks, type EditorLayout, type ToolType } from './video-editor-utils'
 import {
   applyUndoSnapshot,
@@ -77,6 +80,7 @@ import {
   selectCanUseClipboard,
   selectClipById,
   selectClips,
+  selectContentDuration,
   selectCurrentTime,
   selectSelectedClipIds,
   selectTracks,
@@ -406,17 +410,34 @@ function buildDroppedAudioClipInsertion(
   trackIndex: number,
   startTime: number,
   tracks: Track[],
+  existingClips: TimelineClip[] = [],
 ): DroppedAssetInsertion {
   let nextTracks = tracks
   let audioTrackIndex = -1
   const track = nextTracks[trackIndex]
+  const duration = asset.duration || 5
+  const endTime = startTime + duration
 
   if (track && track.kind === 'audio' && !track.locked) {
     audioTrackIndex = trackIndex
   } else {
-    audioTrackIndex = nextTracks.findIndex(
-      candidate => candidate.kind === 'audio' && !candidate.locked && candidate.sourcePatched !== false,
-    )
+    // Find unlocked, sourcePatched audio tracks
+    const audioTrackEntries = nextTracks
+      .map((candidate, idx) => ({ track: candidate, idx }))
+      .filter(entry => entry.track.kind === 'audio' && !entry.track.locked && entry.track.sourcePatched !== false)
+
+    // Check each audio track from top to bottom (A1, A2, A3...) for collision
+    for (const entry of audioTrackEntries) {
+      const hasOverlap = existingClips.some(
+        c => c.trackIndex === entry.idx && c.startTime < endTime && (c.startTime + c.duration) > startTime,
+      )
+      if (!hasOverlap) {
+        audioTrackIndex = entry.idx
+        break
+      }
+    }
+
+    // If all existing audio tracks are occupied at this time range, create a new audio track at the bottom
     if (audioTrackIndex < 0) {
       const audioTrackCount = nextTracks.filter(candidate => candidate.kind === 'audio').length
       nextTracks = [
@@ -436,8 +457,6 @@ function buildDroppedAudioClipInsertion(
   if (audioTrackIndex < 0) {
     return { tracks: nextTracks, clips: [], duration: 0 }
   }
-
-  const duration = asset.duration || 5
 
   return {
     tracks: nextTracks,
@@ -472,9 +491,10 @@ function buildDroppedAssetInsertion(
   trackIndex: number,
   startTime: number,
   tracks: Track[],
+  existingClips: TimelineClip[] = [],
 ): DroppedAssetInsertion {
   if (asset.type === 'audio') {
-    return buildDroppedAudioClipInsertion(asset, trackIndex, startTime, tracks)
+    return buildDroppedAudioClipInsertion(asset, trackIndex, startTime, tracks, existingClips)
   }
 
   return buildDroppedVisualClipInsertion(asset, trackIndex, startTime, tracks)
@@ -618,9 +638,18 @@ export function replaceActiveTimeline(state: EditorState, updater: (timeline: Ti
   }
   const committed = updateEditorModel(state, editorModel => withActiveTimeline(editorModel, () => updated))
   // A successful edit clears any complaint left over from the last one.
-  return state.session.ui.lastRejectedEdit === null
+  const withClearedRejected = state.session.ui.lastRejectedEdit === null
     ? committed
     : updateSession(committed, session => ({ ...session, ui: { ...session.ui, lastRejectedEdit: null } }))
+
+  // If the timeline content duration shrank and currentTime is beyond the new end of the video,
+  // clamp currentTime to the new end so the playhead never hangs out in empty void.
+  const contentDuration = selectContentDuration(withClearedRejected)
+  if (withClearedRejected.session.transport.currentTime > contentDuration) {
+    return setCurrentTime(withClearedRejected, contentDuration)
+  }
+
+  return withClearedRejected
 }
 
 function mapClips(state: EditorState, mapper: (clip: TimelineClip) => TimelineClip): EditorState {
@@ -1020,10 +1049,14 @@ export function insertAssetsToTimeline(state: EditorState, params: InsertAssetsT
   const insertedClips: TimelineClip[] = []
 
   for (const asset of params.assets) {
-    const insertion = buildDroppedAssetInsertion(asset, trackIndex, cursor, nextTracks)
+    const isAudioCascade = asset.type === 'audio' && !(nextTracks[trackIndex]?.kind === 'audio')
+    const itemStartTime = isAudioCascade ? startCursor : cursor
+    const insertion = buildDroppedAssetInsertion(asset, trackIndex, itemStartTime, nextTracks, [...activeTimeline.clips, ...insertedClips])
     nextTracks = insertion.tracks
     insertedClips.push(...insertion.clips)
-    cursor += insertion.duration
+    if (!isAudioCascade) {
+      cursor += insertion.duration
+    }
   }
 
   if (insertedClips.length === 0 && nextTracks === activeTimeline.tracks) {
@@ -1113,9 +1146,10 @@ export function addTextClip(state: EditorState, params: AddTextClipParams = {}):
   let trackIdx = params.trackIndex
   if (trackIdx === undefined) {
     const tracks = selectTracks(next)
+    const mainIdx = mainVideoTrackIndex(tracks)
     const overlayTrackIndices = tracks
       .map((track, index) => ({ track, index }))
-      .filter(({ track, index }) => index > 0 && track.kind === 'video' && track.type !== 'subtitle' && !track.locked)
+      .filter(({ track, index }) => (mainIdx >= 0 ? index !== mainIdx : index > 0) && track.kind === 'video' && track.type !== 'subtitle' && !track.locked)
       .map(({ index }) => index)
     if (overlayTrackIndices.length > 0) {
       trackIdx = overlayTrackIndices[overlayTrackIndices.length - 1]
@@ -1465,7 +1499,29 @@ export function setClipStartTime(state: EditorState, clipId: string, startTime: 
 }
 
 export function setClipDuration(state: EditorState, clipId: string, duration: number): EditorState {
-  return retimeClip(state, clipId, { duration: Math.max(0.1, duration) })
+  const targetClip = selectClipById(state, clipId)
+  if (!targetClip) return state
+
+  const safeDuration = Math.max(0.1, duration)
+  const linkedIds = new Set(targetClip.linkedClipIds || [])
+  const durationRatio = targetClip.duration > 0 ? safeDuration / targetClip.duration : 1
+
+  return replaceActiveTimeline(state, timeline => ({
+    ...timeline,
+    clips: packMainVideoTrack(
+      timeline.tracks,
+      timeline.clips.map(clip => {
+        if (clip.id === clipId) {
+          return { ...clip, duration: safeDuration }
+        }
+        if (linkedIds.has(clip.id)) {
+          return { ...clip, duration: Math.max(0.1, clip.duration * durationRatio) }
+        }
+        return clip
+      }),
+      timeline.transitions,
+    ),
+  }))
 }
 
 /**
@@ -1480,6 +1536,10 @@ export function setClipDuration(state: EditorState, clipId: string, duration: nu
  *
  * Packing the track in the same step is what makes the edit legal: the
  * following clips slide to meet the new duration.
+ *
+ * Any linked clips (such as linked audio from the same video file) are also
+ * updated with the new speed and their durations scaled synchronously to prevent
+ * desynchronization.
  */
 export function setClipSpeed(
   state: EditorState,
@@ -1487,10 +1547,42 @@ export function setClipSpeed(
   speed: number,
   duration?: number,
 ): EditorState {
-  return retimeClip(state, clipId, {
-    speed: clampClipSpeed(speed),
-    ...(duration !== undefined ? { duration: Math.max(0.1, duration) } : {}),
-  })
+  const targetClip = selectClipById(state, clipId)
+  if (!targetClip) return state
+
+  const safeSpeed = clampClipSpeed(speed)
+  const safeDuration = duration !== undefined ? Math.max(0.1, duration) : undefined
+  const linkedIds = new Set(targetClip.linkedClipIds || [])
+  const durationRatio = safeDuration !== undefined && targetClip.duration > 0
+    ? safeDuration / targetClip.duration
+    : undefined
+
+  const patchTarget = (clip: TimelineClip): TimelineClip => {
+    if (clip.id === clipId) {
+      return {
+        ...clip,
+        speed: safeSpeed,
+        ...(safeDuration !== undefined ? { duration: safeDuration } : {}),
+      }
+    }
+    if (linkedIds.has(clip.id)) {
+      return {
+        ...clip,
+        speed: safeSpeed,
+        ...(durationRatio !== undefined ? { duration: Math.max(0.1, clip.duration * durationRatio) } : {}),
+      }
+    }
+    return clip
+  }
+
+  return replaceActiveTimeline(state, timeline => ({
+    ...timeline,
+    clips: packMainVideoTrack(
+      timeline.tracks,
+      timeline.clips.map(patchTarget),
+      timeline.transitions,
+    ),
+  }))
 }
 
 /**
@@ -1514,19 +1606,45 @@ export function setClipsSpeed(
   if (targets.size === 0) return state
   const safeSpeed = clampClipSpeed(speed)
 
+  const allClips = selectClips(state)
+  const linkedToTargets = new Map<string, string>() // linkedId -> parentTargetId
+  for (const clip of allClips) {
+    if (targets.has(clip.id) && clip.linkedClipIds) {
+      for (const lid of clip.linkedClipIds) {
+        if (!targets.has(lid)) {
+          linkedToTargets.set(lid, clip.id)
+        }
+      }
+    }
+  }
+
   return replaceActiveTimeline(state, timeline => ({
     ...timeline,
     clips: packMainVideoTrack(
       timeline.tracks,
-      timeline.clips.map(clip => (
-        targets.has(clip.id)
-          ? {
+      timeline.clips.map(clip => {
+        if (targets.has(clip.id)) {
+          return {
             ...clip,
             speed: safeSpeed,
             ...(durationFor ? { duration: Math.max(0.1, durationFor(clip)) } : {}),
           }
-          : clip
-      )),
+        }
+        const parentTargetId = linkedToTargets.get(clip.id)
+        if (parentTargetId) {
+          const parent = allClips.find(c => c.id === parentTargetId)
+          const newParentDur = parent && durationFor ? durationFor(parent) : undefined
+          const ratio = parent && newParentDur !== undefined && parent.duration > 0
+            ? newParentDur / parent.duration
+            : undefined
+          return {
+            ...clip,
+            speed: safeSpeed,
+            ...(ratio !== undefined ? { duration: Math.max(0.1, clip.duration * ratio) } : {}),
+          }
+        }
+        return clip
+      }),
       timeline.transitions,
     ),
   }))
@@ -1637,6 +1755,21 @@ export function setClipTextStyleField<K extends keyof TextOverlayStyle>(
     textStyle: {
       ...(clip.textStyle || DEFAULT_TEXT_STYLE),
       [field]: value,
+    },
+  })
+}
+
+export function updateClipTextStyle(
+  state: EditorState,
+  clipId: string,
+  patch: Partial<TextOverlayStyle>,
+): EditorState {
+  const clip = selectClips(state).find(candidate => candidate.id === clipId)
+  if (!clip) return state
+  return updateClip(state, clipId, {
+    textStyle: {
+      ...(clip.textStyle || DEFAULT_TEXT_STYLE),
+      ...patch,
     },
   })
 }
@@ -2243,10 +2376,14 @@ export function stepCurrentTime(state: EditorState, delta: number): EditorState 
 }
 
 export function play(state: EditorState): EditorState {
+  const contentDuration = selectContentDuration(state)
+  const isAtEnd = contentDuration > 0 && state.session.transport.currentTime >= contentDuration - 0.04
+  const targetTime = isAtEnd ? 0 : state.session.transport.currentTime
   return updateSession(state, session => ({
     ...session,
     transport: {
       ...session.transport,
+      currentTime: targetTime,
       isPlaying: true,
     },
   }))
@@ -2263,13 +2400,10 @@ export function pause(state: EditorState): EditorState {
 }
 
 export function togglePlayPause(state: EditorState): EditorState {
-  return updateSession(state, session => ({
-    ...session,
-    transport: {
-      ...session.transport,
-      isPlaying: !session.transport.isPlaying,
-    },
-  }))
+  if (state.session.transport.isPlaying) {
+    return pause(state)
+  }
+  return play(state)
 }
 
 export function setShuttleSpeed(state: EditorState, speed: number): EditorState {
@@ -2550,6 +2684,18 @@ export function setHasSourceAsset(state: EditorState, value: boolean): EditorSta
     ui: {
       ...session.ui,
       hasSourceAsset: value,
+    },
+  }))
+}
+
+export function setPreviewAssetId(state: EditorState, assetId: string | null): EditorState {
+  return updateSession(state, session => ({
+    ...session,
+    transport: assetId && session.transport.isPlaying ? { ...session.transport, isPlaying: false } : session.transport,
+    ui: {
+      ...session.ui,
+      previewAssetId: assetId,
+      hasSourceAsset: Boolean(assetId),
     },
   }))
 }
@@ -2994,11 +3140,27 @@ export interface AddFilterClipParams {
 export function addFilterClip(state: EditorState, params: AddFilterClipParams): EditorState {
   let next = state
   let trackIdx = params.trackIndex
-  if (trackIdx === undefined) {
-    const tracks = selectTracks(next)
-    const existingOverlay = tracks.findIndex((t, idx) => idx > 0 && t.kind === 'video' && !t.locked)
-    if (existingOverlay >= 0) {
-      trackIdx = existingOverlay
+
+  const currentTracks = selectTracks(next)
+  const mainIdx = mainVideoTrackIndex(currentTracks)
+
+  // A filter is an adjustment layer that affects everything underneath it.
+  // It must NEVER be placed on the main magnetic video track (track 0 / mainIdx).
+  // If no track is specified, or if the specified track is the main track:
+  if (trackIdx === undefined || trackIdx === mainIdx) {
+    const overlayTrackIndices = currentTracks
+      .map((track, index) => ({ track, index }))
+      .filter(({ track, index }) => (mainIdx >= 0 ? index !== mainIdx : index > 0) && track.kind === 'video' && track.type !== 'subtitle' && !track.locked)
+      .map(({ index }) => index)
+
+    const activeTimeline = selectActiveTimeline(next)
+    const existingClips = activeTimeline?.clips || []
+
+    const topOverlayIndex = overlayTrackIndices.length > 0 ? overlayTrackIndices[overlayTrackIndices.length - 1] : undefined
+    const topOverlayHasClips = topOverlayIndex !== undefined ? existingClips.some(c => c.trackIndex === topOverlayIndex) : false
+
+    if (topOverlayIndex !== undefined && !topOverlayHasClips) {
+      trackIdx = topOverlayIndex
     } else {
       next = addTrack(next, 'video')
       trackIdx = selectTracks(next).length - 1
@@ -3264,6 +3426,100 @@ export function addStickerClip(state: EditorState, params: AddStickerClipParams)
     clips: [...timeline.clips, stickerClip],
   }))
 }
+
+/* =========================================================================
+ * Sound Effect (SFX) Actions
+ * ========================================================================= */
+
+export interface AddSfxClipParams {
+  sfxId: string
+  startTime?: number
+  duration?: number
+  trackIndex?: number
+  audioPath?: string
+  volume?: number
+}
+
+export function addSfxClip(state: EditorState, params: AddSfxClipParams): EditorState {
+  let next = state
+  const startTime = params.startTime ?? selectCurrentTime(next)
+  const def = getSfxDefinition(params.sfxId)
+  const duration = params.duration ?? def?.duration ?? 1.0
+  const audioPath = params.audioPath ?? (def ? `sfx/${def.filename}` : resolveSfxRelativePath(params.sfxId))
+  const sfxName = def ? def.name : (params.sfxId || 'Sound Effect')
+
+  let trackIdx = params.trackIndex
+
+  if (trackIdx === undefined) {
+    const audioTrackEntries = selectTracks(next)
+      .map((candidate, idx) => ({ track: candidate, idx }))
+      .filter(entry => entry.track.kind === 'audio' && !entry.track.locked && entry.track.sourcePatched !== false)
+
+    const clips = selectClips(next)
+    const endTime = startTime + duration
+    const isFreeAt = (idx: number) => !clips.some(c =>
+      c.trackIndex === idx && c.startTime < endTime && (c.startTime + c.duration) > startTime,
+    )
+
+    // Prefer secondary audio tracks (A2+) if available and free to avoid cluttering primary audio/voiceover (A1)
+    let target = audioTrackEntries.length >= 2 && isFreeAt(audioTrackEntries[1].idx)
+      ? audioTrackEntries[1].idx
+      : audioTrackEntries.find(entry => isFreeAt(entry.idx))?.idx
+
+    if (target === undefined) {
+      next = addTrack(next, 'audio')
+      target = selectTracks(next).length - 1
+    }
+    trackIdx = target
+  }
+
+  const assetId = makeId('asset-sfx')
+  const sfxAsset: Asset = {
+    id: assetId,
+    type: 'audio',
+    path: audioPath,
+    prompt: `SFX: ${sfxName}`,
+    resolution: '',
+    duration,
+    createdAt: Date.now(),
+    source: 'sfx',
+  }
+
+  next = updateEditorModel(next, editorModel => ({
+    ...editorModel,
+    assets: [sfxAsset, ...editorModel.assets],
+  }))
+
+  const sfxClip: TimelineClip = {
+    id: makeId('clip-sfx'),
+    assetId: sfxAsset.id,
+    type: 'audio',
+    startTime,
+    duration,
+    trimStart: 0,
+    trimEnd: 0,
+    speed: 1,
+    reversed: false,
+    muted: false,
+    volume: params.volume ?? 1,
+    trackIndex: trackIdx,
+    asset: sfxAsset,
+    importedName: `SFX: ${sfxName}`,
+    flipH: false,
+    flipV: false,
+    transitionIn: { type: 'none', duration: 0 },
+    transitionOut: { type: 'none', duration: 0 },
+    colorCorrection: { ...DEFAULT_COLOR_CORRECTION },
+    transform: { ...DEFAULT_CLIP_TRANSFORM },
+    opacity: 100,
+  }
+
+  return replaceActiveTimeline(next, timeline => ({
+    ...timeline,
+    clips: [...timeline.clips, sfxClip],
+  }))
+}
+
 
 /* =========================================================================
  * Text Preset & Animation Actions & addTextClip
@@ -4039,6 +4295,50 @@ export interface InsertBrollParams {
   fadeIn?: number
   fadeOut?: number
   muteAudio?: boolean
+}
+
+/**
+ * Applies a saved template as a NEW timeline beside the current one.
+ *
+ * Never in place. A template rewrites the frame size, every clip and every
+ * transition, so applying it over the timeline the user is working in would be
+ * an undoable-but-alarming wipe of their edit. A new timeline lets them play
+ * both and keep the one they prefer — the same reasoning as timeline variants,
+ * which is why the result carries a `variantTag`.
+ */
+export function applyTemplateAsTimeline(
+  state: EditorState,
+  params: {
+    template: KomfyTemplate
+    bindings: ReadonlyArray<{ slotIndex: number; assetId: string }>
+    name?: string
+    variantTag?: string
+  },
+): EditorState {
+  const assets = state.editorModel.assets
+  const resolved: TemplateBinding[] = []
+  for (const binding of params.bindings) {
+    const asset = assets.find(candidate => candidate.id === binding.assetId)
+    // A binding naming an asset this project does not have leaves its slot
+    // empty rather than failing the whole apply: the rest of the edit is still
+    // worth having, and the gap is visible on the timeline.
+    if (asset) resolved.push({ slotIndex: binding.slotIndex, asset })
+  }
+
+  const applied = applyTemplate(params.template, resolved, {
+    name: params.name ?? params.template.name,
+    variantTag: params.variantTag ?? 'template',
+  })
+
+  const next = markEditorModelDirty({
+    ...state,
+    editorModel: {
+      ...state.editorModel,
+      timelines: [...state.editorModel.timelines, applied.timeline],
+    },
+  })
+
+  return switchActiveTimeline(next, applied.timeline.id)
 }
 
 /**

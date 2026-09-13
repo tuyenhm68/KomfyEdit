@@ -8,6 +8,7 @@ import { spawnSync } from 'child_process'
 import { findFfmpegPath, runFfmpegWithProgress, type FfmpegProcessHandle } from './ffmpeg-utils'
 import { emitToRenderer } from '../ipc/event-emitter'
 import { logger } from '../logger'
+import { removeEntry } from '../storage/remove-entry'
 
 export type ProxyStatus = 'none' | 'generating' | 'ready' | 'error'
 
@@ -363,7 +364,7 @@ export class ProxyManager {
               freedBytes += fs.statSync(fullPath).size
               fs.unlinkSync(fullPath)
             } else if (entry.isDirectory()) {
-              fs.rmSync(fullPath, { recursive: true, force: true })
+              removeEntry(fullPath)
             }
           } catch {}
         }

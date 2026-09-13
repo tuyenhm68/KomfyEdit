@@ -3,6 +3,7 @@ import { createInitialEditorState } from '../src/editor-state'
 import { setClipSpeed, setClipsSpeed, updateClip } from '../src/editor-actions'
 import { selectActiveTimeline } from '../src/editor-selectors'
 import type { Timeline, TimelineClip } from '../src/project-model'
+import { capcutPositionForSpeed, speedForCapcutPosition } from '../src/clip-speed'
 
 /**
  * Changing a clip's speed on the magnetic track.
@@ -153,3 +154,102 @@ describe('setClipsSpeed', () => {
     expect(setClipsSpeed(before, [], 2)).toBe(before)
   })
 })
+
+describe('linked clips synchronization', () => {
+  function videoWithLinkedAudio() {
+    const video = {
+      ...clip('v1_clip', 0, 20),
+      linkedClipIds: ['a1_clip'],
+    }
+    const audio = {
+      ...clip('a1_clip', 0, 20),
+      type: 'audio',
+      trackIndex: 1,
+      linkedClipIds: ['v1_clip'],
+    }
+    const timeline = {
+      id: 'timeline-1',
+      name: 'Timeline 1',
+      createdAt: 0,
+      tracks: [
+        { id: 'track-v1', name: 'V1', muted: false, locked: false, sourcePatched: true, kind: 'video' },
+        { id: 'track-a1', name: 'A1', muted: false, locked: false, sourcePatched: true, kind: 'audio' },
+      ],
+      clips: [video, audio],
+      subtitles: [],
+    } as unknown as Timeline
+
+    return createInitialEditorState({
+      assets: [],
+      bins: {},
+      timelines: [timeline],
+      activeTimelineId: timeline.id,
+    })
+  }
+
+  it('updates linked audio clip speed and duration when video speed is changed', () => {
+    const next = setClipSpeed(videoWithLinkedAudio(), 'v1_clip', 2, 10)
+    const clips = selectActiveTimeline(next)!.clips
+    const video = clips.find(c => c.id === 'v1_clip')!
+    const audio = clips.find(c => c.id === 'a1_clip')!
+
+    expect(video.speed).toBe(2)
+    expect(video.duration).toBe(10)
+    expect(audio.speed).toBe(2)
+    expect(audio.duration).toBe(10)
+  })
+
+  it('updates linked clips when setClipsSpeed is used', () => {
+    const next = setClipsSpeed(videoWithLinkedAudio(), ['v1_clip'], 2, c => c.duration / 2)
+    const clips = selectActiveTimeline(next)!.clips
+    const video = clips.find(c => c.id === 'v1_clip')!
+    const audio = clips.find(c => c.id === 'a1_clip')!
+
+    expect(video.speed).toBe(2)
+    expect(video.duration).toBe(10)
+    expect(audio.speed).toBe(2)
+    expect(audio.duration).toBe(10)
+  })
+})
+
+describe('CapCut speed slider mapping and magnetic snapping', () => {
+  it('maps landmarks exactly to their position percentages', () => {
+    expect(capcutPositionForSpeed(0.1)).toBeCloseTo(0.0)
+    expect(capcutPositionForSpeed(1.0)).toBeCloseTo(0.2)
+    expect(capcutPositionForSpeed(2.0)).toBeCloseTo(0.4)
+    expect(capcutPositionForSpeed(5.0)).toBeCloseTo(0.6)
+    expect(capcutPositionForSpeed(10.0)).toBeCloseTo(0.8)
+    expect(capcutPositionForSpeed(100.0)).toBeCloseTo(1.0)
+  })
+
+  it('snaps magnetically to landmark speeds when near landmark positions', () => {
+    // 10x is at pos 0.8
+    expect(speedForCapcutPosition(0.8, true)).toBe(10)
+    expect(speedForCapcutPosition(0.79, true)).toBe(10)
+    expect(speedForCapcutPosition(0.82, true)).toBe(10)
+
+    // 1x is at pos 0.2
+    expect(speedForCapcutPosition(0.2, true)).toBe(1)
+    expect(speedForCapcutPosition(0.18, true)).toBe(1)
+    expect(speedForCapcutPosition(0.22, true)).toBe(1)
+
+    // 2x is at pos 0.4
+    expect(speedForCapcutPosition(0.39, true)).toBe(2)
+    expect(speedForCapcutPosition(0.41, true)).toBe(2)
+
+    // 5x is at pos 0.6
+    expect(speedForCapcutPosition(0.58, true)).toBe(5)
+    expect(speedForCapcutPosition(0.62, true)).toBe(5)
+  })
+
+  it('interpolates smoothly when outside magnetic snap zone', () => {
+    // Midpoint between 1x (pos 0.2) and 2x (pos 0.4) is pos 0.3
+    const mid = speedForCapcutPosition(0.3, true)
+    expect(mid).toBeGreaterThan(1)
+    expect(mid).toBeLessThan(2)
+
+    // With snap disabled
+    expect(speedForCapcutPosition(0.81, false)).toBeGreaterThan(10)
+  })
+})
+

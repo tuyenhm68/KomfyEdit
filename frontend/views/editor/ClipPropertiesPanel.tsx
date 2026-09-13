@@ -1,13 +1,7 @@
-import { useState } from 'react'
+import { useState } from 'react'
 import { mainVideoTrackIndex } from '@core/video-editor-utils'
-import {
-  MAX_CLIP_SPEED,
-  MIN_CLIP_SPEED,
-  clampClipSpeed,
-  formatClipSpeed,
-  sliderPositionForSpeed,
-  speedForSliderPosition,
-} from '@core/clip-speed'
+import { clampClipSpeed } from '@core/clip-speed'
+import { CapCutSpeedSlider } from './CapCutSpeedSlider'
 import { shallow } from 'zustand/vanilla/shallow'
 import {
   FileVideo, FileImage, FileAudio, Layers, Type,
@@ -61,7 +55,6 @@ export function ClipPropertiesPanel() {
     setClipFilterIntensity,
     updateClip,
     setClipSpeed,
-    setClipDuration,
     setClipStartTime,
     setKeyframe,
     setClipMask,
@@ -635,30 +628,6 @@ export function ClipPropertiesPanel() {
           </div>
         </div>}
 
-        {tab === 'speed' && <div>
-          <label className="block text-xs text-zinc-500 mb-1">Duration</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              value={selectedClip.duration.toFixed(2)}
-              onChange={(e) => {
-                let dur = Math.max(0.1, parseFloat(e.target.value) || 1)
-                const maxDur = getMaxClipDuration(selectedClip)
-                dur = Math.min(dur, maxDur)
-                setClipDuration(selectedClip.id, dur)
-              }}
-              min={0.1}
-              max={getMaxClipDuration(selectedClip)}
-              step={0.1}
-              className="flex-1 px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-white text-sm"
-            />
-            <span className="text-xs text-zinc-500">sec</span>
-            {selectedClip.type === 'video' && selectedClip.asset?.duration && (
-              <span className="text-[10px] text-zinc-600">max {getMaxClipDuration(selectedClip).toFixed(1)}s</span>
-            )}
-          </div>
-        </div>}
-
         {tab === 'speed' && hasPlaybackControls && (() => {
           const hasSpeedRamp = hasKeyframesForProperty(selectedClip, 'speed')
           const curTime = selectCurrentTime(getEditorState())
@@ -692,21 +661,28 @@ export function ClipPropertiesPanel() {
             }
           }
 
-          /** One path for both the slider and the typed field. */
-          const applySpeed = (newSpeed: number) => {
+          /** One path for both the slider, the typed field, and the duration field. */
+          const applySpeed = (newSpeed: number, explicitDuration?: number) => {
             if (hasSpeedRamp && timeInClip >= 0 && timeInClip <= selectedClip.duration) {
               setKeyframe(selectedClip.id, 'speed', timeInClip, newSpeed)
               return
             }
             const oldSpeed = selectedClip.speed ?? 1
-            let newDuration = selectedClip.duration * (oldSpeed / newSpeed)
+            let newDuration = explicitDuration !== undefined
+              ? explicitDuration
+              : selectedClip.duration * (oldSpeed / newSpeed)
             const maxDur = getMaxClipDuration({ ...selectedClip, speed: newSpeed })
             newDuration = Math.min(newDuration, maxDur)
-            newDuration = Math.max(0.5, newDuration)
-            // Not updateClip: a shorter or longer clip leaves the clips after it
-            // on V1 starting at the old moment, and the validator refuses a V1
-            // with a gap. setClipSpeed re-packs the track in the same edit.
+            newDuration = Math.max(0.1, newDuration)
             setClipSpeed(selectedClip.id, newSpeed, newDuration)
+          }
+
+          const applyDurationInSpeedTab = (targetDuration: number) => {
+            const currentDuration = selectedClip.duration
+            const curSpeed = selectedClip.speed ?? 1
+            const mediaSeconds = currentDuration * curSpeed
+            const calculatedSpeed = clampClipSpeed(Math.round((mediaSeconds / targetDuration) * 100) / 100)
+            applySpeed(calculatedSpeed, targetDuration)
           }
 
           return (
@@ -721,67 +697,57 @@ export function ClipPropertiesPanel() {
                       currentValue={currentSpeed}
                     />
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    {/* Typed as well as dragged: across three decades the
-                        slider cannot land on an exact 37.5x. */}
-                    <input
-                      type="number"
-                      min={MIN_CLIP_SPEED}
-                      max={MAX_CLIP_SPEED}
-                      step={0.1}
-                      value={currentSpeed}
-                      onChange={(e) => {
-                        const typed = parseFloat(e.target.value)
-                        if (!Number.isFinite(typed)) return
-                        applySpeed(clampClipSpeed(typed))
-                      }}
-                      className="w-16 px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-white text-xs font-mono text-right"
-                      title={`${formatClipSpeed(MIN_CLIP_SPEED)} to ${formatClipSpeed(MAX_CLIP_SPEED)}`}
-                    />
-                    <span className="text-[10px] text-zinc-500">x</span>
+                  <div className="flex items-center gap-2">
                     {hasSpeedRamp && (
                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-semibold border border-amber-500/30">
                         RAMP
                       </span>
                     )}
+                    <button
+                      className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                      onClick={() => {
+                        if (hasSpeedRamp) {
+                          clearKeyframes(selectedClip.id, 'speed')
+                        }
+                        const restored = Math.max(
+                          0.5,
+                          Math.min(
+                            selectedClip.duration * (selectedClip.speed ?? 1),
+                            getMaxClipDuration({ ...selectedClip, speed: 1 }),
+                          ),
+                        )
+                        setClipSpeed(selectedClip.id, 1, restored)
+                      }}
+                      title="Reset to 1.0x"
+                    >
+                      Reset (1.0x)
+                    </button>
                   </div>
                 </div>
-                <input
-                  type="range"
-                  // The track is a slider position, not a speed: the range
-                  // spans three decades, so it is mapped logarithmically.
-                  min={0}
-                  max={1}
-                  step={0.001}
-                  value={sliderPositionForSpeed(currentSpeed)}
-                  onChange={(e) => applySpeed(speedForSliderPosition(parseFloat(e.target.value)))}
-                  className="w-full accent-blue-500"
+                <CapCutSpeedSlider
+                  speed={currentSpeed}
+                  onChange={(newSpeed) => applySpeed(newSpeed)}
                 />
-                <div className="flex justify-between text-[10px] text-zinc-500 mt-1">
-                  <span>{formatClipSpeed(MIN_CLIP_SPEED)}</span>
-                  <button
-                    className="hover:text-blue-400 transition-colors"
-                    onClick={() => {
-                      if (hasSpeedRamp) {
-                        clearKeyframes(selectedClip.id, 'speed')
-                      }
-                      // Duration has to come back with the speed, or the clip
-                      // keeps the shortened length and silently plays less of
-                      // the media than it did before.
-                      const restored = Math.max(
-                        0.5,
-                        Math.min(
-                          selectedClip.duration * (selectedClip.speed ?? 1),
-                          getMaxClipDuration({ ...selectedClip, speed: 1 }),
-                        ),
-                      )
-                      setClipSpeed(selectedClip.id, 1, restored)
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">Duration</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={selectedClip.duration.toFixed(2)}
+                    onChange={(e) => {
+                      const dur = Math.max(0.1, parseFloat(e.target.value) || 1)
+                      applyDurationInSpeedTab(dur)
                     }}
-                    title="Reset to 1x"
-                  >
-                    1.0x
-                  </button>
-                  <span>{formatClipSpeed(MAX_CLIP_SPEED)}</span>
+                    min={0.1}
+                    step={0.1}
+                    className="flex-1 px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-white text-sm"
+                  />
+                  <span className="text-xs text-zinc-500">sec</span>
+                  {selectedClip.type === 'video' && selectedClip.asset?.duration && (
+                    <span className="text-[10px] text-zinc-600">max {getMaxClipDuration(selectedClip).toFixed(1)}s</span>
+                  )}
                 </div>
               </div>
 

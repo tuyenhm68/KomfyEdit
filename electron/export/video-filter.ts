@@ -320,7 +320,12 @@ export function buildVideoFilterGraph(
 
       let chain: string
       if (clip.type === 'image') {
-        inputs.push('-loop', '1', '-framerate', String(fps), '-t', clip.duration.toFixed(6), '-i', clip.path)
+        const isGif = clip.path.toLowerCase().endsWith('.gif')
+        if (isGif) {
+          inputs.push('-ignore_loop', '0', '-t', clip.duration.toFixed(6), '-i', clip.path)
+        } else {
+          inputs.push('-loop', '1', '-framerate', String(fps), '-t', clip.duration.toFixed(6), '-i', clip.path)
+        }
         // `null` is a no-op that exists only to anchor the chain. Every filter
         // below is appended with a leading comma, so a bare `[N:v]` would produce
         // `[N:v],scale=...` — and ffmpeg reads the empty piece before that comma
@@ -509,7 +514,12 @@ export function buildVideoFilterGraph(
       
       let blurChain: string
       if (primaryClip.type === 'image') {
-        inputs.push('-loop', '1', '-framerate', String(fps), '-t', primaryClip.duration.toFixed(6), '-i', primaryClip.path)
+        const isGif = primaryClip.path.toLowerCase().endsWith('.gif')
+        if (isGif) {
+          inputs.push('-ignore_loop', '0', '-t', primaryClip.duration.toFixed(6), '-i', primaryClip.path)
+        } else {
+          inputs.push('-loop', '1', '-framerate', String(fps), '-t', primaryClip.duration.toFixed(6), '-i', primaryClip.path)
+        }
         blurChain = `[${blurInputIdx}:v]`
       } else {
         const { seekArg, adjustedTrimStart } = computePreInputSeek(primaryClip.trimStart)

@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url)
 import { renderQueue } from './render-queue'
 import { emitToRenderer } from '../ipc/event-emitter'
 import { logger } from '../logger'
+import { removeEntry } from '../storage/remove-entry'
 
 export interface RenderCacheRequestParams {
   hash: string
@@ -225,7 +226,7 @@ export class RenderCacheManager {
               freedBytes += fs.statSync(fullPath).size
               fs.unlinkSync(fullPath)
             } else if (entry.isDirectory()) {
-              fs.rmSync(fullPath, { recursive: true, force: true })
+              removeEntry(fullPath)
             }
           } catch {}
         }

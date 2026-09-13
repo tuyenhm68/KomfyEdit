@@ -18,6 +18,7 @@ import {
   Loader2,
   CheckCircle,
   AlertCircle,
+  Bot,
 } from 'lucide-react'
 import { EFFECT_DEFINITIONS } from '../../types/project'
 import type { Asset, EffectType } from '../../types/project-model'
@@ -34,7 +35,11 @@ import {
   timelineTranscriptCues,
   transcriptCuesForClip,
 } from '@core/transcript-store'
-import { detectBrollOpportunities, type BrollOpportunity } from '@core/broll-copilot'
+import {
+  applyBrollSuggestions,
+  detectBrollOpportunities,
+  type BrollOpportunity,
+} from '@core/broll-copilot'
 import { applyEditPatchToState } from '@core/edit-patch'
 import { pathToFileUrl } from '../../lib/file-url'
 import { useSettings } from '../../contexts/SettingsContext'
@@ -43,7 +48,9 @@ import type { LibraryTab } from './editor-state'
 import { selectClips, selectSelectedClipIds } from './editor-selectors'
 import { useEditorActions, useEditorStore, useEditorStoreApi } from './editor-store'
 import { TransitionsLibrary } from './TransitionsLibrary'
+import { TemplatesLibrary } from './TemplatesLibrary'
 import { FiltersLibrary } from './FiltersLibrary'
+import { SoundEffectsLibrary } from './SoundEffectsLibrary'
 import {
   VideoEditorAssetsPanel,
   type VideoEditorAssetsPanelHandle,
@@ -81,6 +88,16 @@ export function EditorLibraryPanel(props: EditorLibraryPanelProps) {
   }
 
   if (tab === 'audio') {
+    if (section === 'sound-effects') {
+      return (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-950">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <SoundEffectsLibrary importFiles={props.importFiles} />
+          </div>
+        </div>
+      )
+    }
+
     if (section === 'extract') {
       return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-950">
@@ -120,6 +137,7 @@ export function EditorLibraryPanel(props: EditorLibraryPanelProps) {
           />
         )}
         {tab === 'transitions' && <TransitionsLibrary />}
+        {tab === 'templates' && <TemplatesLibrary section={section} />}
         {tab === 'stickers' && (
           <StickersLibrary importFiles={props.importFiles} />
         )}
@@ -781,6 +799,54 @@ function AutoCaptionsPanel() {
   )
 }
 
+/**
+ * Why an AI panel could not run, and what to do about it.
+ *
+ * Highlights and B-roll both think through the CLI configured in EditPilot and
+ * nothing else, so both fail the same two ways: no CLI set up, or a CLI that
+ * did not answer. Neither is something the user can guess from a blank result,
+ * and the first has a fix one click away.
+ */
+function CliRequiredNotice({ failure }: {
+  failure: { kind: 'missing' } | { kind: 'failed'; detail: string }
+}) {
+  const { t } = useTranslation()
+  const actions = useEditorActions()
+
+  return (
+    <div className="space-y-2 rounded-lg border border-amber-800/80 bg-amber-950/40 p-2.5">
+      <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-300">
+        <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+        <span>
+          {failure.kind === 'missing'
+            ? t('library.aiCli.notConfigured')
+            : t('library.aiCli.failed', { detail: failure.detail })}
+        </span>
+      </p>
+      <button
+        onClick={() => actions.setShowEditPilot(true)}
+        className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded bg-amber-900/60 px-2.5 py-1.5 text-[11px] font-medium text-amber-100 transition-colors hover:bg-amber-900"
+      >
+        <Bot className="h-3.5 w-3.5" />
+        <span>{t('library.aiCli.openEditPilot')}</span>
+      </button>
+    </div>
+  )
+}
+
+/** Turns the handler's error code into what the notice should say, or null. */
+function readCliFailure(error: string | undefined):
+  | { kind: 'missing' }
+  | { kind: 'failed'; detail: string }
+  | null {
+  if (!error) return null
+  if (error === 'NO_CLI') return { kind: 'missing' }
+  if (error.startsWith('CLI_FAILED')) {
+    return { kind: 'failed', detail: error.replace(/^CLI_FAILED:?\s*/, '') }
+  }
+  return null
+}
+
 function AutoHighlightsPanel() {
   const { t } = useTranslation()
   const { settings, openSettings } = useSettings()
@@ -796,6 +862,9 @@ function AutoHighlightsPanel() {
 
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
+  const [cliFailure, setCliFailure] = useState<
+    { kind: 'missing' } | { kind: 'failed'; detail: string } | null
+  >(null)
   /**
    * Whether making the transcript should also caption the timeline.
    *
@@ -938,6 +1007,7 @@ function AutoHighlightsPanel() {
 
     setIsAnalyzing(true)
     setFeedback(null)
+    setCliFailure(null)
 
     try {
       // Reads the transcript, never the media: the trip to Whisper is a
@@ -959,14 +1029,23 @@ function AutoHighlightsPanel() {
       if (res.success && res.highlights && res.highlights.length > 0) {
         setCandidates(res.highlights)
         setFeedback({ success: true, message: t('library.autoHighlights.foundCount', { count: res.highlights.length }) })
-      } else {
-        setFeedback({
-          success: false,
-          message: res.error === 'EMPTY_TRANSCRIPT'
-            ? t('library.autoHighlights.noTranscript')
-            : res.error || t('library.autoHighlights.notFound'),
-        })
+        return
       }
+
+      // A missing or broken CLI gets its own block with a way out of it,
+      // rather than a raw error code in the feedback strip.
+      const failure = readCliFailure(res.error)
+      if (failure) {
+        setCliFailure(failure)
+        return
+      }
+
+      setFeedback({
+        success: false,
+        message: res.error === 'EMPTY_TRANSCRIPT'
+          ? t('library.autoHighlights.noTranscript')
+          : res.error || t('library.autoHighlights.notFound'),
+      })
     } catch (err: any) {
       setFeedback({ success: false, message: err.message || String(err) })
     } finally {
@@ -1091,6 +1170,8 @@ function AutoHighlightsPanel() {
         )}
       </button>
 
+      {cliFailure && <CliRequiredNotice failure={cliFailure} />}
+
       {feedback && (
         <div className={`flex items-start gap-1.5 text-[11px] p-2.5 rounded-lg border ${
           feedback.success
@@ -1161,6 +1242,10 @@ function BrollCopilotPanel({ importFiles }: {
   const assets = useEditorStore(s => s.editorModel.assets)
   const [opportunities, setOpportunities] = useState<BrollOpportunity[]>([])
   const [hasScanned, setHasScanned] = useState(false)
+  const [isScanning, setIsScanning] = useState(false)
+  const [cliFailure, setCliFailure] = useState<
+    { kind: 'missing' } | { kind: 'failed'; detail: string } | null
+  >(null)
   const [feedback, setFeedback] = useState<{ success: boolean; message: string } | null>(null)
   const [selectedBrollAssetId, setSelectedBrollAssetId] = useState<string>('')
 
@@ -1190,7 +1275,18 @@ function BrollCopilotPanel({ importFiles }: {
     e.target.value = ''
   }
 
-  const handleScan = () => {
+  /**
+   * Two halves, deliberately kept apart.
+   *
+   * WHERE a cutaway goes is arithmetic on the transcript — a run of speech with
+   * nothing covering it — so it stays here, offline and repeatable. WHAT to
+   * show is a judgement about what is being said, and that goes to the CLI
+   * configured in EditPilot. Counting word frequency used to stand in for the
+   * second half, which is why a spot about 3D model quality came back labelled
+   * "#độ #chỉ #tạo": the words were in the sentence, but they were not a
+   * suggestion. Nothing is shown now unless a model actually wrote it.
+   */
+  const handleScan = async () => {
     // The stored transcript wins over the caption track: it holds whole
     // utterances, so a talking block is found from where speech actually runs
     // rather than from where smart chunking happened to break a line. Captions
@@ -1198,7 +1294,7 @@ function BrollCopilotPanel({ importFiles }: {
     const transcriptCues = timelineTranscriptCues(transcripts, clips)
     const speechCues = transcriptCues.length > 0 ? transcriptCues : subtitlesAsTranscriptCues(subtitles)
 
-    const opps = detectBrollOpportunities({
+    const spots = detectBrollOpportunities({
       subtitles: speechCues.map((cue, index) => ({
         id: `transcript-${index}`,
         text: cue.text,
@@ -1210,17 +1306,56 @@ function BrollCopilotPanel({ importFiles }: {
       minDuration: 5.0,
       maxDuration: 8.0,
     })
-    setOpportunities(opps)
+
+    setCliFailure(null)
     setHasScanned(true)
-    if (opps.length > 0) {
-      setFeedback({ success: true, message: t('library.brollCopilot.foundCount', { count: opps.length }) })
-    } else {
+
+    if (spots.length === 0) {
+      setOpportunities([])
       setFeedback({
         success: false,
         message: speechCues.length === 0
           ? t('library.brollCopilot.noSubtitles')
           : t('library.brollCopilot.noLongSpeeches'),
       })
+      return
+    }
+
+    if (!window.electronAPI?.brollSuggest) {
+      setOpportunities([])
+      setCliFailure({ kind: 'missing' })
+      return
+    }
+
+    setIsScanning(true)
+    setFeedback(null)
+    try {
+      const res = await window.electronAPI.brollSuggest({
+        spots: spots.map(spot => ({
+          startTime: spot.startTime,
+          endTime: spot.endTime,
+          contextText: spot.contextText,
+        })),
+      })
+
+      if (res.success && res.suggestions) {
+        setOpportunities(applyBrollSuggestions(spots, res.suggestions))
+        setFeedback({
+          success: true,
+          message: t('library.brollCopilot.foundCount', { count: spots.length }),
+        })
+        return
+      }
+
+      // No half-written suggestions on screen: the spots are real but nothing
+      // has said what to put in them, and keyword soup is what we just removed.
+      setOpportunities([])
+      setCliFailure(readCliFailure(res.error) ?? { kind: 'failed', detail: res.error ?? '' })
+    } catch (err: any) {
+      setOpportunities([])
+      setCliFailure({ kind: 'failed', detail: err?.message || String(err) })
+    } finally {
+      setIsScanning(false)
     }
   }
 
@@ -1263,11 +1398,23 @@ function BrollCopilotPanel({ importFiles }: {
 
       <button
         onClick={handleScan}
-        className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg bg-accent text-zinc-950 text-[12px] font-semibold hover:bg-accent/90 transition-colors shadow-sm"
+        disabled={isScanning}
+        className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg bg-accent text-zinc-950 text-[12px] font-semibold hover:bg-accent/90 transition-colors shadow-sm disabled:opacity-40 disabled:pointer-events-none"
       >
-        <Sparkles className="h-4 w-4" />
-        <span>{t('library.brollCopilot.scanBtn')}</span>
+        {isScanning ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>{t('library.brollCopilot.scanning')}</span>
+          </>
+        ) : (
+          <>
+            <Sparkles className="h-4 w-4" />
+            <span>{t('library.brollCopilot.scanBtn')}</span>
+          </>
+        )}
       </button>
+
+      {cliFailure && <CliRequiredNotice failure={cliFailure} />}
 
       {feedback && (
         <div
@@ -1431,7 +1578,7 @@ function StickersLibrary({
   const { t } = useTranslation()
   const actions = useEditorActions()
   const assets = useEditorStore(s => s.editorModel.assets)
-  const [selectedCategory, setSelectedCategory] = useState<StickerCategory | 'all' | 'custom'>('all')
+  const [selectedCategory, setSelectedCategory] = useState<StickerCategory | 'all' | 'custom' | 'animated'>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -1443,7 +1590,9 @@ function StickersLibrary({
   const filteredBuiltInStickers = useMemo(() => {
     if (selectedCategory === 'custom') return []
     return STICKER_DEFINITIONS.filter(sticker => {
-      if (selectedCategory !== 'all' && sticker.category !== selectedCategory) {
+      if (selectedCategory === 'animated') {
+        if (!sticker.isAnimated) return false
+      } else if (selectedCategory !== 'all' && sticker.category !== selectedCategory) {
         return false
       }
       if (!searchQuery.trim()) return true
@@ -1459,6 +1608,16 @@ function StickersLibrary({
   }, [selectedCategory, searchQuery, t])
 
   const filteredCustomStickers = useMemo(() => {
+    if (selectedCategory === 'animated') {
+      return customStickers.filter(a => {
+        const isAnim = a.path.toLowerCase().endsWith('.gif') || a.path.toLowerCase().endsWith('.webp')
+        if (!isAnim) return false
+        if (!searchQuery.trim()) return true
+        const q = searchQuery.toLowerCase().trim()
+        const name = a.path.split(/[/\\]/).pop() || a.id
+        return name.toLowerCase().includes(q) || (a.prompt && a.prompt.toLowerCase().includes(q))
+      })
+    }
     if (selectedCategory !== 'all' && selectedCategory !== 'custom') return []
     return customStickers.filter(a => {
       if (!searchQuery.trim()) return true
@@ -1539,7 +1698,9 @@ function StickersLibrary({
             ? STICKER_DEFINITIONS.length + customStickers.length
             : cat.id === 'custom'
               ? customStickers.length
-              : STICKER_DEFINITIONS.filter(s => s.category === cat.id).length
+              : cat.id === 'animated'
+                ? STICKER_DEFINITIONS.filter(s => s.isAnimated).length + customStickers.filter(a => a.path.toLowerCase().endsWith('.gif') || a.path.toLowerCase().endsWith('.webp')).length
+                : STICKER_DEFINITIONS.filter(s => s.category === cat.id).length
 
           const categoryLabel = t(`library.stickers.categories.${cat.id}` as any) || cat.label
 
@@ -1591,6 +1752,11 @@ function StickersLibrary({
                         title={`${stickerName} - ${t('library.stickers.clickToAdd')}`}
                         className="group relative flex flex-col items-center justify-center rounded-lg border border-zinc-800/80 bg-zinc-900/50 p-2.5 hover:border-accent/60 hover:bg-zinc-800/90 transition-all cursor-pointer shadow-sm"
                       >
+                        {sticker.isAnimated && (
+                          <div className="absolute left-1.5 top-1.5 rounded bg-accent/20 border border-accent/40 px-1 py-0.5 text-[8px] font-bold text-accent uppercase tracking-wider leading-none select-none">
+                            GIF
+                          </div>
+                        )}
                         <div className="flex h-14 w-14 items-center justify-center">
                           <img
                             src={`/stickers/${sticker.filename}`}
@@ -1623,6 +1789,7 @@ function StickersLibrary({
                 <div className="grid grid-cols-3 gap-2">
                   {filteredCustomStickers.map(asset => {
                     const name = asset.path.split(/[/\\]/).pop() || asset.id
+                    const isAnim = asset.path.toLowerCase().endsWith('.gif') || asset.path.toLowerCase().endsWith('.webp')
                     return (
                       <div
                         key={asset.id}
@@ -1630,6 +1797,11 @@ function StickersLibrary({
                         title={`${name} - ${t('library.stickers.clickToAdd')}`}
                         className="group relative flex flex-col items-center justify-center rounded-lg border border-zinc-800/80 bg-zinc-900/50 p-2.5 hover:border-accent/60 hover:bg-zinc-800/90 transition-all cursor-pointer shadow-sm"
                       >
+                        {isAnim && (
+                          <div className="absolute left-1.5 top-1.5 rounded bg-accent/20 border border-accent/40 px-1 py-0.5 text-[8px] font-bold text-accent uppercase tracking-wider leading-none select-none">
+                            GIF
+                          </div>
+                        )}
                         <div className="flex h-14 w-14 items-center justify-center">
                           <img
                             src={pathToFileUrl(asset.smallThumbnailPath || asset.path)}

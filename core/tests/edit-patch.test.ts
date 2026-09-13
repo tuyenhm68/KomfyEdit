@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { buildTemplateFromTimeline } from '../src/template-model'
 import {
   createInitialEditorState,
   editPatchSchema,
@@ -1784,7 +1785,107 @@ Chào mừng các bạn đã quay trở lại với video hướng dẫn làm n�
       expect(clipsAfterUndo.some(c => c.startTime === 5.0 && c.duration === 4.0 && c.trackIndex > 0)).toBe(false)
     })
   })
+
+  /*
+   * A template is an edit the agent can apply too, so it ships with a patch
+   * operation — the repo rule in AGENTS.md, "every feature ships with its MCP
+   * counterpart".
+   */
+  describe('apply_template', () => {
+    const templateFrom = (state: ReturnType<typeof makeTestState>) =>
+      buildTemplateFromTimeline(state.editorModel.timelines[0], { name: 'Nhịp nhanh' }).template
+
+    const stateWithAsset = () => {
+      const base = makeTestState(10)
+      return {
+        ...base,
+        editorModel: {
+          ...base.editorModel,
+          assets: [{
+            id: 'asset-1', type: 'video' as const, path: 'C:/mine/one.mp4',
+            prompt: '', resolution: '', duration: 30, createdAt: 0,
+          }],
+        },
+      }
+    }
+
+    it('describes how many slots get filled, and how many do not', () => {
+      const state = stateWithAsset()
+      const template = templateFrom(state)
+      const described = describePatch(state, {
+        version: 1,
+        operations: [{ op: 'apply_template', template, bindings: [] }],
+      })
+      expect(described.toLowerCase()).toContain('template')
+      expect(described).toContain('0/1')
+      expect(described).toContain('left empty')
+    })
+
+    it('refuses a template with no slots to put footage into', () => {
+      const state = stateWithAsset()
+      const template = { ...templateFrom(state), slots: [] }
+      const result = validateEditPatch(state, {
+        version: 1,
+        operations: [{ op: 'apply_template', template, bindings: [] }],
+      })
+      expect(result.valid).toBe(false)
+      if (!result.valid) expect(result.error).toContain('no slots')
+    })
+
+    it('refuses a binding to an asset the project does not have', () => {
+      const state = stateWithAsset()
+      const template = templateFrom(state)
+      const result = validateEditPatch(state, {
+        version: 1,
+        operations: [{
+          op: 'apply_template', template,
+          bindings: [{ slotIndex: 1, assetId: 'not-here' }],
+        }],
+      })
+      expect(result.valid).toBe(false)
+      if (!result.valid) expect(result.error).toContain('does not exist in project')
+    })
+
+    it('refuses two clips bound into the same hole', () => {
+      const state = stateWithAsset()
+      const template = templateFrom(state)
+      const result = validateEditPatch(state, {
+        version: 1,
+        operations: [{
+          op: 'apply_template', template,
+          bindings: [
+            { slotIndex: 1, assetId: 'asset-1' },
+            { slotIndex: 1, assetId: 'asset-1' },
+          ],
+        }],
+      })
+      expect(result.valid).toBe(false)
+      if (!result.valid) expect(result.error).toContain('bound more than once')
+    })
+
+    /* Applying must never overwrite the edit the user is working in. */
+    it('adds a new timeline and leaves the original untouched', () => {
+      const state = stateWithAsset()
+      const template = templateFrom(state)
+      const before = state.editorModel.timelines[0]
+
+      const result = applyPatch(state, {
+        version: 1,
+        operations: [{
+          op: 'apply_template', template,
+          bindings: [{ slotIndex: 1, assetId: 'asset-1' }],
+        }],
+      })
+      expect(result.success).toBe(true)
+
+      const next = result.state
+      expect(next.editorModel.timelines).toHaveLength(2)
+      expect(next.editorModel.timelines[0]).toEqual(before)
+
+      const applied = next.editorModel.timelines[1]
+      expect(next.editorModel.activeTimelineId).toBe(applied.id)
+      expect(applied.variantTag).toBe('template')
+      expect(applied.clips.find(c => c.assetId === 'asset-1')).toBeDefined()
+    })
+  })
 })
-
-
-

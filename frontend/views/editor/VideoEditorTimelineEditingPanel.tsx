@@ -297,22 +297,27 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     const firstVideoTrackIndex = tracks.findIndex(t => t.kind === 'video' && t.type !== 'subtitle')
     if (idx === firstVideoTrackIndex) return // Video track 1 (V1) is default and protected from deletion
 
-    const audioTrackIndices = tracks
-      .map((t, i) => ({ t, i }))
-      .filter(e => e.t.kind === 'audio')
-    const lastAudioIdx = audioTrackIndices[audioTrackIndices.length - 1]?.i
-    const lastAudioHasClips = clips.some(c => c.trackIndex === lastAudioIdx)
-    if (idx === lastAudioIdx && !lastAudioHasClips) return // Trailing empty audio track is always preserved and protected from deletion
-
-    setClips(prev => prev
+    const nextClips = clips
       .filter(clip => clip.trackIndex !== idx)
       .map(clip => clip.trackIndex > idx ? { ...clip, trackIndex: clip.trackIndex - 1 } : clip)
-    )
-    setSubtitles(prev => prev
+    const nextSubtitles = subtitles
       .filter(subtitle => subtitle.trackIndex !== idx)
       .map(subtitle => subtitle.trackIndex > idx ? { ...subtitle, trackIndex: subtitle.trackIndex - 1 } : subtitle)
-    )
-    setTracks(tracks.filter((_, trackIndex) => trackIndex !== idx))
+    const remainingTracks = tracks.filter((_, trackIndex) => trackIndex !== idx)
+
+    let videoCounter = 1
+    let audioCounter = 1
+    let stickerCounter = 1
+    const nextTracks = remainingTracks.map(track => {
+      if (track.type === 'subtitle') return track
+      if (track.kind === 'audio') return { ...track, name: `A${audioCounter++}` }
+      if (track.kind === 'sticker') return { ...track, name: `S${stickerCounter++}` }
+      return { ...track, name: `V${videoCounter++}` }
+    })
+
+    setClips(nextClips)
+    setSubtitles(nextSubtitles)
+    setTracks(nextTracks)
   }, [clips, setClips, setSubtitles, setTracks, tracks])
 
   // No effect keeping a spare audio row here on purpose. A new project opens
@@ -642,7 +647,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
     getCurrentTime, setCurrentTime, setIsPlaying,
     snapEnabled, resolveClipPath, getMaxClipDuration, addClipToTimeline,
     assets, timelines, activeTimeline, currentProjectId,
-    timelineRef, trackContainerRef,
+    timelineRef, trackContainerRef, trackContentRef,
     orderedTracks, getTrackHeight, trackTopPx,
     splitClipAtPlayhead, setSelectedSubtitleId, setSelectedGap,
     audioTrackHeight, videoTrackHeight, subtitleTrackHeight,
@@ -690,7 +695,7 @@ export function VideoEditorTimelineEditingPanel(props: VideoEditorTimelineEditin
 
   const handleGeneralTimelineDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    const content = trackContentRef.current
+    const content = trackContentRef.current ?? trackContainerRef.current
     if (!content) return
     const contentRect = content.getBoundingClientRect()
     const yInContainer = e.clientY - contentRect.top

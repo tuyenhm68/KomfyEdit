@@ -1,3 +1,4 @@
+import { extractJsonObject } from './auto-highlight'
 import { makeId } from './id-generator'
 import type { SubtitleClip, TimelineClip } from './project-model'
 
@@ -93,6 +94,103 @@ function getSubEnd(s: SubtitleClip): number {
   if (typeof s.endTime === 'number') return s.endTime
   if (typeof (s as any).duration === 'number') return s.startTime + (s as any).duration
   return s.startTime
+}
+
+export const BROLL_SYSTEM_INSTRUCTION = `Bạn là biên tập viên video, chuyên chọn cảnh B-roll minh hoạ cho video nói (podcast, review, hướng dẫn).
+Với mỗi đoạn lời thoại được đưa, hãy đề xuất một cảnh B-roll cụ thể, quay được hoặc tìm được, minh hoạ đúng điều người nói đang nói.
+
+Nguyên tắc:
+1. Cụ thể, không chung chung: "màn hình chạy lệnh cài đặt trong terminal" chứ không phải "cảnh công nghệ".
+2. Bám vào nội dung đoạn đó, không phải chủ đề chung của cả video.
+3. Từ khoá là để tìm footage — danh từ tìm kiếm được, không phải hư từ.`
+
+/**
+ * Asks the CLI what to actually show over each stretch of talking.
+ *
+ * Where the B-roll goes is decided here, by the clock: a run of speech with no
+ * cutaway in it. What to show is a judgement about meaning, and counting word
+ * frequency is not that — it returned the loudest nouns in the sentence, so a
+ * spot about 3D model quality came back tagged "#độ #chỉ #tạo". The timings
+ * stay local and deterministic; only the suggestion is asked of a model.
+ */
+export function buildBrollSuggestionPrompt(
+  spots: ReadonlyArray<{ startTime: number; endTime: number; contextText: string }>,
+): string {
+  const listed = spots
+    .map((spot, index) =>
+      `${index + 1}. [${spot.startTime.toFixed(1)}s - ${spot.endTime.toFixed(1)}s] "${spot.contextText.trim()}"`)
+    .join('\n')
+
+  return `Dưới đây là ${spots.length} đoạn lời thoại cần chèn B-roll minh hoạ.
+
+Trả về DUY NHẤT một khối JSON hợp lệ theo cấu trúc sau, đúng ${spots.length} phần tử, giữ nguyên thứ tự và số thứ tự:
+{
+  "suggestions": [
+    {
+      "index": 1,
+      "suggestedPrompt": "Mô tả cảnh B-roll nên chèn, một câu ngắn",
+      "keywords": ["từ", "khoá", "tìm", "footage"]
+    }
+  ]
+}
+
+Các đoạn:
+${listed}
+`
+}
+
+export interface BrollSuggestion {
+  index: number
+  suggestedPrompt: string
+  keywords: string[]
+}
+
+/**
+ * Reads the CLI's reply, which arrives as prose around a JSON block.
+ *
+ * Anything unreadable yields an empty list rather than a throw: the caller
+ * decides what to tell the user, and half-parsed suggestions matched to the
+ * wrong spot would be worse than none.
+ */
+export function parseBrollSuggestions(rawText: string): BrollSuggestion[] {
+  try {
+    const data = JSON.parse(extractJsonObject(rawText))
+    const list = Array.isArray(data) ? data : data?.suggestions
+    if (!Array.isArray(list)) return []
+
+    return list
+      .map((item: any, position: number): BrollSuggestion => ({
+        index: Number.isFinite(item?.index) ? Number(item.index) : position + 1,
+        suggestedPrompt: String(item?.suggestedPrompt ?? '').trim(),
+        keywords: Array.isArray(item?.keywords)
+          ? item.keywords.map((k: any) => String(k).trim()).filter(Boolean).slice(0, 6)
+          : [],
+      }))
+      .filter(item => item.suggestedPrompt.length > 0)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Puts each suggestion on the spot it was written for, matching by the number
+ * the prompt asked the model to echo back. A spot the model skipped keeps what
+ * it had rather than borrowing its neighbour's answer.
+ */
+export function applyBrollSuggestions(
+  spots: ReadonlyArray<BrollOpportunity>,
+  suggestions: ReadonlyArray<BrollSuggestion>,
+): BrollOpportunity[] {
+  const byIndex = new Map(suggestions.map(s => [s.index, s]))
+  return spots.map((spot, position) => {
+    const match = byIndex.get(position + 1)
+    if (!match) return spot
+    return {
+      ...spot,
+      suggestedPrompt: match.suggestedPrompt,
+      keywords: match.keywords.length > 0 ? match.keywords : spot.keywords,
+    }
+  })
 }
 
 /**

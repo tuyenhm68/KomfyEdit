@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'fs'
+import path from 'path'
 import {
   STICKER_DEFINITIONS,
   STICKER_CATEGORIES,
   getStickerDefinition,
   isValidStickerId,
+  isAnimatedSticker,
   resolveStickerRelativePath,
   DEFAULT_STICKER_DURATION,
   DEFAULT_STICKER_PIXELS,
@@ -16,17 +19,18 @@ import {
 } from '../src'
 
 describe('stickers core definitions', () => {
-  it('defines at least 12 stickers across categories', () => {
-    expect(STICKER_DEFINITIONS.length).toBeGreaterThanOrEqual(12)
+  it('defines at least 50 stickers across categories', () => {
+    expect(STICKER_DEFINITIONS.length).toBeGreaterThanOrEqual(50)
     const categories = new Set(STICKER_DEFINITIONS.map(s => s.category))
     expect(categories.has('emoji')).toBe(true)
     expect(categories.has('badge')).toBe(true)
     expect(categories.has('icon')).toBe(true)
   })
 
-  it('contains expected categories including all and custom', () => {
+  it('contains expected categories including all, animated, and custom', () => {
     const ids = STICKER_CATEGORIES.map(c => c.id)
     expect(ids).toContain('all')
+    expect(ids).toContain('animated')
     expect(ids).toContain('emoji')
     expect(ids).toContain('badge')
     expect(ids).toContain('custom')
@@ -41,8 +45,29 @@ describe('stickers core definitions', () => {
     expect(isValidStickerId('nonexistent')).toBe(false)
   })
 
+  it('identifies and retrieves animated stickers', () => {
+    const animFire = getStickerDefinition('anim-fire')
+    expect(animFire).toBeDefined()
+    expect(animFire?.isAnimated).toBe(true)
+    expect(animFire?.filename).toBe('anim-fire.gif')
+    expect(isAnimatedSticker('anim-fire')).toBe(true)
+    expect(isAnimatedSticker('anim-fire.gif')).toBe(true)
+    expect(isAnimatedSticker('anim-fire.webp')).toBe(true)
+    expect(isAnimatedSticker('star')).toBe(false)
+    expect(isAnimatedSticker('star.png')).toBe(false)
+  })
+
+  it('verifies that all sticker files exist on disk in public/stickers', () => {
+    const publicStickersDir = path.resolve(__dirname, '../../public/stickers')
+    for (const sticker of STICKER_DEFINITIONS) {
+      const filePath = path.join(publicStickersDir, sticker.filename)
+      expect(fs.existsSync(filePath), `Missing sticker file: ${sticker.filename}`).toBe(true)
+    }
+  })
+
   it('resolves relative sticker path', () => {
     expect(resolveStickerRelativePath('star')).toBe('stickers/star.png')
+    expect(resolveStickerRelativePath('anim-fire')).toBe('stickers/anim-fire.gif')
     expect(resolveStickerRelativePath('custom-sticker.png')).toBe('stickers/custom-sticker.png')
   })
 })

@@ -571,13 +571,16 @@ export function getTextAnimation(id: string): TextAnimation | undefined {
 
 /**
  * Apply a text preset to a clip.
- * CRITICAL: Preserves existing text content on the clip so user work is never lost!
+ * CRITICAL: Preserves existing text content and screen position on the clip so user work is never lost!
  */
 export function applyTextPreset(clip: TimelineClip, presetId: string): TimelineClip {
   const preset = getTextPreset(presetId)
   if (!preset) return clip
 
   const currentText = clip.textStyle?.text ?? 'Title Text'
+  const currentPosX = clip.textStyle?.positionX ?? DEFAULT_TEXT_STYLE.positionX
+  const currentPosY = clip.textStyle?.positionY ?? DEFAULT_TEXT_STYLE.positionY
+
   return {
     ...clip,
     textStyle: {
@@ -585,6 +588,8 @@ export function applyTextPreset(clip: TimelineClip, presetId: string): TimelineC
       ...clip.textStyle,
       ...preset.style,
       text: currentText, // Preserve existing text!
+      positionX: currentPosX, // Preserve existing position!
+      positionY: currentPosY,
     },
   }
 }

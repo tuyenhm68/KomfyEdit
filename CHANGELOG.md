@@ -12,6 +12,75 @@ A release with no section here is refused by CI before anything is built.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-09-13
+
+### Added
+- **Sound Effects Library.** 29 studio-quality sound effects built into the Audio
+  tab, organised across 7 categories: Transitions, Accents & UI, Notifications &
+  Games, Impacts & Hits, Comedy & Meme, and Foley & Ambience. Click to preview
+  with instant play/pause, and click '+' to insert directly onto audio track A2
+  at your playhead. You can also import and organise your own external sound effect files.
+- **Animated Stickers.** 39 new animated stickers (Google Noto Emoji) with transparent
+  alpha channels across reactions, celebrations, hearts, and gestures. Filter by the
+  new "Animated" pill in the Stickers tab, and export with seamless looping animation
+  throughout the clip duration.
+- **Bilingual search & localization.** Complete Vietnamese and English translations
+  for all 29 sound effects and their acoustic usage tips. The search bar now matches
+  both Vietnamese and English names, descriptions, and keywords dynamically.
+- **Templates.** Save the edit you are looking at — its cuts, effects, text and
+  transitions — and put new footage through it on your next video. The footage
+  on the main track becomes the slots you fill in later; your media is never
+  stored in the template. Applying one builds a **new timeline** beside the one
+  you are working in, so nothing you have done is overwritten and you can play
+  both before choosing. A template also carries its own music and overlays, so
+  a saved edit sounds and looks the same next time; that media is copied into
+  the project when you apply it, so the project does not depend on the template
+  staying where it is. Each one can carry a cover picture taken from your first
+  shot, so you recognise it in the list — that is a frame of your own footage,
+  so it is a tick box rather than something that just happens. Templates are
+  files under your presets folder, and EditPilot can apply them too.
+- Eight sample templates ship with the app, so the Templates tab is not empty on
+  the first run: openers, montages, comparisons and text pieces. None of them
+  carries music — what they carry is the cut rhythm, the framing moves and the
+  titles. Apply one, change it, and save it as your own.
+- The Templates tab is a browser rather than a list: shelves down the left side,
+  a search box, filters for shape and for how many shots a template wants, and a
+  two-column grid. A template with no cover picture is drawn as a diagram of
+  itself — the frame in its real proportions and a block per shot — rather than
+  left blank.
+- Before a template is applied, the slot picker says what each clip you picked
+  will actually do: play as it is, slow down to fill a slot it is short for, or
+  leave the end of that slot empty. That was always decided somewhere; now it is
+  decided in front of you.
+
+### Fixed
+- **Filter layer placement.** Adding a filter from the Filters library now always
+  creates an independent Filter Adjustment Layer on the topmost video track rather
+  than collapsing onto track V1 at the bottom or falling into the audio track.
+  Clicking a filter while previewing video no longer replaces clip properties
+  behind your back.
+- **Timeline track dragging & layer creation.** Fixed vertical coordinate tracking
+  across tracks, making it smooth and accurate to drag clips between layers. Fixed
+  an issue where dragging a clip upwards to create a new track was undone by
+  automatic track pruning.
+- Clearing a cache freed nothing, and said it had worked. Every cache the app
+  offers to empty — the draft cache, the render cache, proxies — plus the
+  temporary folders EditPilot leaves behind, kept growing on disk for anyone
+  whose Windows account name is not plain English, because the deletion was
+  silently refusing any path with an accented character in it. Deleting a
+  template with a Vietnamese name had the same problem.
+
+### Changed
+- Auto Highlights and B-roll Copilot now think only through the CLI you set up
+  in EditPilot. Neither falls back to an OpenAI key any more, and when no CLI is
+  configured they say so and offer to open EditPilot instead of quietly using
+  something else.
+- B-roll suggestions are written by that CLI rather than assembled from the most
+  frequent words in the sentence, so a spot is described by what to film —
+  "close-up of a 3D model turning under light, showing the polished metal and
+  the frosted shell" — instead of by tags like `#độ #chỉ #tạo`. Where each
+  cutaway goes is still worked out locally from the transcript.
+
 ## [1.0.3] - 2026-09-11
 
 ### Added

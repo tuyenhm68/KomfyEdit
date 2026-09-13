@@ -11,7 +11,18 @@
  *   the app's id   a dev run is folded into the installed KomfyEdit's button
  *                  and inherits that app's icon.
  *   an id of its   nothing to inherit from, so Windows falls back to the
- *   own            window's icon, which is ours.
+ *   own            icon embedded in the RUNNING EXE — not the window's icon.
+ *
+ * That last line was wrong for a long time: it claimed Windows falls back to
+ * the window icon. Measured 12/09/2026 — Alt+Tab showed the app's "K" while the
+ * taskbar button showed Electron's atom, and neither KomfyEdit shortcut
+ * declares an AppUserModelID. So an unregistered id sends the button to the
+ * executable's own icon, and only Alt+Tab keeps reading the window.
+ *
+ * The packaged build is therefore correct by accident rather than by design:
+ * its fallback is KomfyEdit.exe, which carries the icon. A dev run falls back
+ * to node_modules/electron/dist/electron.exe, which carries Electron's — which
+ * is what scripts/patch-dev-icon.cjs exists to fix.
  *
  * So a packaged run must claim `appId` — notifications, jump lists and the
  * installer's shortcut are all filed under it — and a dev run must claim

@@ -14,6 +14,7 @@ import { makeId } from '../../core/src/id-generator'
 import { buildInlineMcpConfigArgs, type InlineMcpTarget } from '../../core/src/editpilot-mcp-config'
 import { addPermissionRule } from '../../core/src/editpilot-permissions'
 import { buildSpawnPlan } from './windows-spawn'
+import { removeEntryQuietly } from '../storage/remove-entry'
 import { detectAgents, readEditPilotConfig } from './agent-detect'
 import { emitToRenderer } from '../ipc/event-emitter'
 import { logger } from '../logger'
@@ -397,14 +398,23 @@ const ONE_SHOT_TIMEOUT_MS = 3 * 60 * 1000
  * Returns null rather than throwing when no CLI is usable, so the caller can
  * fall back to its own provider instead of failing the feature outright.
  */
+export type OneShotResult =
+  | { ok: true; agentLabel: string; text: string }
+  /** No CLI is installed or configured — the user has to go and set one up. */
+  | { ok: false; reason: 'no-agent' }
+  /** A CLI was found but the question did not come back answered. */
+  | { ok: false; reason: 'failed'; agentLabel: string; detail: string }
+
 export async function runOneShot(params: {
   prompt: string
   timeoutMs?: number
-}): Promise<{ agentLabel: string; text: string } | null> {
+}): Promise<OneShotResult> {
   const config = readEditPilotConfig()
   const statuses = await detectAgents(config)
   const agentId = resolveActiveAgent(config, statuses)
-  if (!agentId) return null
+  // Told apart from a failure on purpose: "install a CLI" and "your CLI errored"
+  // need different words, and the caller cannot write either from a bare null.
+  if (!agentId) return { ok: false, reason: 'no-agent' }
 
   const definition = EDIT_PILOT_AGENTS[agentId]
   const status = statuses.find(candidate => candidate.id === agentId)
@@ -430,33 +440,36 @@ export async function runOneShot(params: {
     let stdout = ''
     let stderr = ''
     let settled = false
-    const finish = (result: { agentLabel: string; text: string } | null) => {
+    const finish = (result: OneShotResult) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      try { fs.rmSync(workDir, { recursive: true, force: true }) } catch { /* best effort */ }
+      removeEntryQuietly(workDir)
       resolve(result)
     }
+    const failed = (detail: string): OneShotResult =>
+      ({ ok: false, reason: 'failed', agentLabel: definition.label, detail })
 
     const timer = setTimeout(() => {
       child.kill()
       logger.warn(`[editpilot] Hỏi nhanh ${definition.label} quá hạn`)
-      finish(null)
+      finish(failed(`Quá ${(params.timeoutMs ?? ONE_SHOT_TIMEOUT_MS) / 1000}s không phản hồi`))
     }, params.timeoutMs ?? ONE_SHOT_TIMEOUT_MS)
 
     child.stdout?.on('data', chunk => { stdout += String(chunk) })
     child.stderr?.on('data', chunk => { stderr += String(chunk) })
     child.on('error', err => {
       logger.warn(`[editpilot] Hỏi nhanh thất bại: ${err.message}`)
-      finish(null)
+      finish(failed(err.message))
     })
     child.on('close', code => {
       if (code !== 0 || !stdout.trim()) {
-        logger.warn(`[editpilot] Hỏi nhanh thoát mã ${code}: ${summarizeFailureDetail(stderr, [])}`)
-        finish(null)
+        const detail = summarizeFailureDetail(stderr, [])
+        logger.warn(`[editpilot] Hỏi nhanh thoát mã ${code}: ${detail}`)
+        finish(failed(detail || `Thoát với mã ${code}`))
         return
       }
-      finish({ agentLabel: definition.label, text: stdout })
+      finish({ ok: true, agentLabel: definition.label, text: stdout })
     })
   })
 }
@@ -548,7 +561,7 @@ export async function startRun({ runId, prompt, projectsDir, projectId, projectN
     if (run.mcpConfigPath) {
       try { fs.unlinkSync(run.mcpConfigPath) } catch { /* best effort */ }
     }
-    try { fs.rmSync(workDir, { recursive: true, force: true }) } catch { /* best effort */ }
+    removeEntryQuietly(workDir)
     activeRuns.delete(runId)
   }
 

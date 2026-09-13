@@ -2,12 +2,13 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import {
   selectActiveTimelineInPoint,
   selectActiveTimelineOutPoint,
+  selectContentDuration,
   selectIsPlaying,
   selectPlayingInOut,
   selectShuttleSpeed,
   selectTotalDuration,
 } from './editor-selectors'
-import { useEditorActions, useEditorStore } from './editor-store'
+import { useEditorActions, useEditorGetState, useEditorStore } from './editor-store'
 
 const STATE_UPDATE_INTERVAL_MS = 250
 
@@ -26,6 +27,7 @@ export function usePlaybackEngine(params: UsePlaybackEngineParams) {
   const inPoint = useEditorStore(selectActiveTimelineInPoint)
   const outPoint = useEditorStore(selectActiveTimelineOutPoint)
   const totalDuration = useEditorStore(selectTotalDuration)
+  const getEditorState = useEditorGetState()
 
   const lastStateUpdateRef = useRef(0)
   const prevIsPlayingRef = useRef(isPlaying)
@@ -42,6 +44,14 @@ export function usePlaybackEngine(params: UsePlaybackEngineParams) {
 
   useEffect(() => {
     if (!isPlaying) return
+
+    // If starting playback while already at or past the end of the content, rewind to 0!
+    const currentState = getEditorState()
+    const contentDuration = selectContentDuration(currentState)
+    if (contentDuration > 0 && playbackTimeRef.current >= contentDuration - 0.04) {
+      playbackTimeRef.current = 0
+      setCurrentTime(0)
+    }
 
     const effectiveSpeed = shuttleSpeed !== 0 ? shuttleSpeed : 1
     let lastTimestamp: number | null = null
@@ -68,8 +78,10 @@ export function usePlaybackEngine(params: UsePlaybackEngineParams) {
         if (next >= loopEnd) next = loopStart
         else if (next <= loopStart) next = loopEnd
       } else {
-        if (next >= totalDuration) {
-          next = 0
+        const currentContentDuration = selectContentDuration(getEditorState())
+        const maxLimit = currentContentDuration > 0 ? currentContentDuration : totalDuration
+        if (next >= maxLimit) {
+          next = maxLimit
           stopped = true
         } else if (next < 0) {
           next = 0
@@ -108,6 +120,7 @@ export function usePlaybackEngine(params: UsePlaybackEngineParams) {
     playbackTimeRef,
     setCurrentTime,
     stopShuttle,
+    getEditorState,
   ])
 
   useEffect(() => {

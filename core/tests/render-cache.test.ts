@@ -171,6 +171,21 @@ describe('findComplexSegments', () => {
     const adjSegments = findComplexSegments(adjTimeline)
     expect(adjSegments.length).toBe(1)
     expect(adjSegments[0].reasons).toContain('adjustment')
+
+    const speedTimeline = createTimeline({
+      clips: [
+        makeClip({
+          id: 'spd1',
+          trackIndex: 0,
+          startTime: 0,
+          duration: 2,
+          speed: 10,
+        }),
+      ],
+    })
+    const speedSegments = findComplexSegments(speedTimeline)
+    expect(speedSegments.length).toBe(1)
+    expect(speedSegments[0].reasons).toContain('speed')
   })
 
   it('merges adjacent or overlapping complex intervals', () => {

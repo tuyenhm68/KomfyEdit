@@ -177,3 +177,115 @@ describe('adding an asset to the main video track', () => {
     expect(byTime[0].assetId).toBe(existing.id)
   })
 })
+
+describe('adding audio assets to timeline with cascading layers', () => {
+  function audioAsset(id: string, duration = 5): Asset {
+    return {
+      id,
+      type: 'audio',
+      path: `/tmp/${id}.mp3`,
+      prompt: '',
+      resolution: '',
+      duration,
+      createdAt: 0,
+    }
+  }
+
+  it('cascades consecutive audio clips into lower audio tracks when occupied', () => {
+    const audio1 = audioAsset('audio-1', 10)
+    const audio2 = audioAsset('audio-2', 8)
+    const audio3 = audioAsset('audio-3', 6)
+
+    const initial = stateWithOneClipOnV1()
+    // First audio added
+    const after1 = insertAssetsToTimeline(initial, {
+      assets: [audio1],
+      trackIndex: 0,
+      startTime: 0,
+    })
+
+    const t1 = selectActiveTimeline(after1)!
+    // An audio track A1 was created
+    const audioClips1 = t1.clips.filter(c => c.type === 'audio')
+    expect(audioClips1).toHaveLength(1)
+    const a1Track = t1.tracks[audioClips1[0].trackIndex]
+    expect(a1Track.kind).toBe('audio')
+    expect(a1Track.name).toBe('A1')
+
+    // Second audio added at same start time (e.g. 0) -> A1 is occupied, should go to new track A2
+    const after2 = insertAssetsToTimeline(after1, {
+      assets: [audio2],
+      trackIndex: 0,
+      startTime: 0,
+    })
+
+    const t2 = selectActiveTimeline(after2)!
+    const audioClips2 = t2.clips.filter(c => c.type === 'audio')
+    expect(audioClips2).toHaveLength(2)
+    const clip1 = audioClips2.find(c => c.assetId === audio1.id)!
+    const clip2 = audioClips2.find(c => c.assetId === audio2.id)!
+    expect(clip1.trackIndex).not.toBe(clip2.trackIndex)
+    expect(t2.tracks[clip2.trackIndex].name).toBe('A2')
+
+    // Third audio added in a batch
+    const after3 = insertAssetsToTimeline(after2, {
+      assets: [audio3],
+      trackIndex: 0,
+      startTime: 0,
+    })
+
+    const t3 = selectActiveTimeline(after3)!
+    const audioClips3 = t3.clips.filter(c => c.type === 'audio')
+    expect(audioClips3).toHaveLength(3)
+    const clip3 = audioClips3.find(c => c.assetId === audio3.id)!
+    expect(t3.tracks[clip3.trackIndex].name).toBe('A3')
+  })
+
+  it('cascades a multi-asset batch of audio files onto separate lower layers', () => {
+    const audioA = audioAsset('audio-a', 10)
+    const audioB = audioAsset('audio-b', 8)
+
+    const initial = stateWithOneClipOnV1()
+    const result = insertAssetsToTimeline(initial, {
+      assets: [audioA, audioB],
+      trackIndex: 0,
+      startTime: 0,
+    })
+
+    const timeline = selectActiveTimeline(result)!
+    const audioClips = timeline.clips.filter(c => c.type === 'audio')
+    expect(audioClips).toHaveLength(2)
+    const clipA = audioClips.find(c => c.assetId === audioA.id)!
+    const clipB = audioClips.find(c => c.assetId === audioB.id)!
+
+    expect(clipA.trackIndex).not.toBe(clipB.trackIndex)
+    expect(timeline.tracks[clipA.trackIndex].name).toBe('A1')
+    expect(timeline.tracks[clipB.trackIndex].name).toBe('A2')
+  })
+
+  it('reuses existing audio track if time range does not overlap', () => {
+    const audio1 = audioAsset('audio-1', 5)
+    const audio2 = audioAsset('audio-2', 5)
+
+    const initial = stateWithOneClipOnV1()
+    const after1 = insertAssetsToTimeline(initial, {
+      assets: [audio1],
+      trackIndex: 0,
+      startTime: 0,
+    })
+
+    // Add audio2 starting at 10 (no overlap with [0, 5])
+    const after2 = insertAssetsToTimeline(after1, {
+      assets: [audio2],
+      trackIndex: 0,
+      startTime: 10,
+    })
+
+    const t2 = selectActiveTimeline(after2)!
+    const audioClips = t2.clips.filter(c => c.type === 'audio')
+    expect(audioClips).toHaveLength(2)
+    // Both can share track A1 since there is no time conflict
+    expect(audioClips[0].trackIndex).toBe(audioClips[1].trackIndex)
+  })
+})
+

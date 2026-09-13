@@ -45,6 +45,8 @@ extraResources:
     to: luts
   - from: resources/stickers
     to: stickers
+  - from: resources/sfx
+    to: sfx
   # createWindow() reads the window icon at runtime from <installdir>/resources.
   # The .ico under `directories.buildResources` is only an input to the
   # installer and the exe's own resources — nothing copies it into the app — so

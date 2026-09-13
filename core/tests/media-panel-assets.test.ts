@@ -69,4 +69,34 @@ describe('media panel asset list', () => {
 
     expect(selectVisibleAssets(state, filters).map(a => a.id)).toEqual(['asset-imported'])
   })
+
+  it('hides SFX sound effect assets from the media panel', () => {
+    const sfxAssetWithSource: Asset = {
+      id: 'asset-sfx-pop',
+      type: 'audio',
+      path: 'sfx/pop.wav',
+      prompt: 'SFX: Pop Bubble',
+      resolution: '',
+      duration: 0.15,
+      createdAt: 0,
+      source: 'sfx',
+    }
+    const sfxLegacyAsset: Asset = {
+      id: 'asset-sfx-whoosh',
+      type: 'audio',
+      path: 'sfx/whoosh.wav',
+      prompt: 'SFX: Whoosh Swoosh',
+      resolution: '',
+      duration: 0.45,
+      createdAt: 0,
+    }
+    const state = stateWith([imported, sfxAssetWithSource, sfxLegacyAsset])
+
+    // Clips can still resolve their SFX assets
+    expect(selectAssets(state).some(a => a.id === 'asset-sfx-pop')).toBe(true)
+    expect(selectAssets(state).some(a => a.id === 'asset-sfx-whoosh')).toBe(true)
+
+    // But the media panel ONLY lists the user-imported asset
+    expect(selectVisibleAssets(state, filters).map(a => a.id)).toEqual(['asset-imported'])
+  })
 })

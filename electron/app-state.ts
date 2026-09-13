@@ -3,6 +3,7 @@ import { createRequire } from 'module'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { removeEntry } from './storage/remove-entry'
 
 const require = createRequire(import.meta.url)
 let appInstance: App | null = null
@@ -59,7 +60,7 @@ export function getProjectAssetsPath(): string {
     } catch {
       try {
         fs.cpSync(legacyDefault, defaultPath, { recursive: true })
-        fs.rmSync(legacyDefault, { recursive: true, force: true })
+        removeEntry(legacyDefault)
       } catch (err) {
         console.warn('[app-state] could not migrate legacy assets directory:', err)
       }

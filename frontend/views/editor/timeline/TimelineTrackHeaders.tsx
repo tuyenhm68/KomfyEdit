@@ -341,7 +341,7 @@ export const TimelineTrackHeaders: React.FC<TimelineTrackHeadersProps> = ({
                           S
                         </button>
                       )}
-                      {tracks.length > 1 && !(track.kind === 'video' && (track.name === 'V1' || realIndex === tracks.findIndex(t => t.kind === 'video'))) && !(track.kind === 'audio' && realIndex === Math.max(...tracks.map((t, idx) => t.kind === 'audio' ? idx : -1)) && !allClips.some(c => c.trackIndex === realIndex)) && (
+                      {tracks.length > 1 && !(track.kind === 'video' && (track.name === 'V1' || realIndex === tracks.findIndex(t => t.kind === 'video'))) && (
                         <Tooltip content="Delete track" side="right">
                           <button
                             onClick={() => deleteTrack(realIndex)}

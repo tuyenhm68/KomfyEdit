@@ -22,7 +22,7 @@ export function resolveStickerPath(stickerIdOrPath: string): string {
   const bare = stickerIdOrPath.replace(/\\/g, '/').split('/').pop() || stickerIdOrPath
   const filename = def
     ? def.filename
-    : bare.endsWith('.png') || bare.endsWith('.webp')
+    : bare.endsWith('.png') || bare.endsWith('.webp') || bare.endsWith('.gif')
       ? bare
       : `${bare}.png`
 

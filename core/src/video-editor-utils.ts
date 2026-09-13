@@ -258,77 +258,7 @@ export function pruneEmptyOverlayTracks(
   clips: TimelineClip[],
   subtitles: SubtitleClip[] = [],
 ): { tracks: Track[]; clips: TimelineClip[]; subtitles: SubtitleClip[] } {
-  const videoTrackIndices = tracks
-    .map((track, idx) => ({ track, idx }))
-    .filter(e => e.track.kind === 'video' && e.track.type !== 'subtitle')
-  const stickerTrackIndices = tracks
-    .map((track, idx) => ({ track, idx }))
-    .filter(e => e.track.kind === 'sticker')
-
-  if (videoTrackIndices.length <= 1 && stickerTrackIndices.length === 0) {
-    return { tracks, clips, subtitles }
-  }
-
-  // The first video track (V1) is protected and never removed
-  const tracksToRemove = new Set<number>()
-  for (let i = 1; i < videoTrackIndices.length; i++) {
-    const trackIdx = videoTrackIndices[i].idx
-    const hasClips = clips.some(c => c.trackIndex === trackIdx)
-    if (!hasClips) {
-      tracksToRemove.add(trackIdx)
-    }
-  }
-
-  // Sticker rows have no protected first row: they exist only to carry
-  // stickers, so an empty one is a row the user has to look past. Adding a
-  // sticker builds a fresh row whenever it needs one.
-  for (const entry of stickerTrackIndices) {
-    if (!clips.some(c => c.trackIndex === entry.idx)) {
-      tracksToRemove.add(entry.idx)
-    }
-  }
-
-  if (tracksToRemove.size === 0) {
-    return { tracks, clips, subtitles }
-  }
-
-  const newTracks: Track[] = []
-  const oldToNewIndex = new Map<number, number>()
-
-  let videoCounter = 1
-  let stickerCounter = 1
-  for (let i = 0; i < tracks.length; i++) {
-    if (tracksToRemove.has(i)) {
-      continue
-    }
-    const track = tracks[i]
-    oldToNewIndex.set(i, newTracks.length)
-    if (track.kind === 'video' && track.type !== 'subtitle') {
-      newTracks.push({
-        ...track,
-        name: `V${videoCounter++}`,
-      })
-    } else if (track.kind === 'sticker') {
-      newTracks.push({
-        ...track,
-        name: `S${stickerCounter++}`,
-      })
-    } else {
-      newTracks.push(track)
-    }
-  }
-
-  const newClips = clips.map(clip => ({
-    ...clip,
-    trackIndex: oldToNewIndex.get(clip.trackIndex) ?? clip.trackIndex,
-  }))
-
-  const newSubtitles = subtitles.map(sub => ({
-    ...sub,
-    trackIndex: oldToNewIndex.get(sub.trackIndex) ?? sub.trackIndex,
-  }))
-
-  return { tracks: newTracks, clips: newClips, subtitles: newSubtitles }
+  return pruneEmptyTracks(tracks, clips, subtitles)
 }
 
 export function clampVal(val: number, limits: { min: number; max: number }): number {

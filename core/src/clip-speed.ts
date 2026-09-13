@@ -111,3 +111,61 @@ export function mediaSecondsForTimelineSeconds(
 ): number {
   return timelineSeconds * clampClipSpeed(speed ?? 1)
 }
+
+export const CAPCUT_SPEED_LANDMARKS = [0.1, 1.0, 2.0, 5.0, 10.0, 100.0] as const
+export const CAPCUT_LANDMARK_POSITIONS = [0, 0.2, 0.4, 0.6, 0.8, 1.0] as const
+
+/**
+ * Maps a speed value (0.1x - 100x) to a slider position (0 - 1) matching CapCut's layout:
+ * 0.1x (0%), 1x (20%), 2x (40%), 5x (60%), 10x (80%), 100x (100%).
+ */
+export function capcutPositionForSpeed(speed: number): number {
+  const clamped = clampClipSpeed(speed)
+  for (let i = 0; i < CAPCUT_SPEED_LANDMARKS.length - 1; i++) {
+    const s0 = CAPCUT_SPEED_LANDMARKS[i]
+    const s1 = CAPCUT_SPEED_LANDMARKS[i + 1]
+    const p0 = CAPCUT_LANDMARK_POSITIONS[i]
+    const p1 = CAPCUT_LANDMARK_POSITIONS[i + 1]
+    if (clamped >= s0 && clamped <= s1) {
+      const t = (Math.log10(clamped) - Math.log10(s0)) / (Math.log10(s1) - Math.log10(s0))
+      return p0 + t * (p1 - p0)
+    }
+  }
+  return clamped >= 100 ? 1 : 0
+}
+
+/**
+ * Maps a slider position (0 - 1) back to speed with magnetic snapping to landmark ticks.
+ */
+export function speedForCapcutPosition(position: number, snap = true): number {
+  const clampedPos = Math.min(1, Math.max(0, position))
+
+  if (snap) {
+    const SNAP_RADIUS = 0.035 // ~3.5% magnetic snap window around each landmark tick
+    for (let i = 0; i < CAPCUT_LANDMARK_POSITIONS.length; i++) {
+      if (Math.abs(clampedPos - CAPCUT_LANDMARK_POSITIONS[i]) <= SNAP_RADIUS) {
+        return CAPCUT_SPEED_LANDMARKS[i]
+      }
+    }
+  }
+
+  for (let i = 0; i < CAPCUT_LANDMARK_POSITIONS.length - 1; i++) {
+    const p0 = CAPCUT_LANDMARK_POSITIONS[i]
+    const p1 = CAPCUT_LANDMARK_POSITIONS[i + 1]
+    const s0 = CAPCUT_SPEED_LANDMARKS[i]
+    const s1 = CAPCUT_SPEED_LANDMARKS[i + 1]
+    if (clampedPos >= p0 && clampedPos <= p1) {
+      const t = (clampedPos - p0) / (p1 - p0)
+      const raw = Math.pow(10, Math.log10(s0) + t * (Math.log10(s1) - Math.log10(s0)))
+      if (raw < 2) {
+        return Math.round(raw * 100) / 100
+      } else if (raw < 10) {
+        return Math.round(raw * 10) / 10
+      } else {
+        return Math.round(raw)
+      }
+    }
+  }
+
+  return 100
+}

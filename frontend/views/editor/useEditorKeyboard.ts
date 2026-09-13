@@ -4,6 +4,7 @@ import { sampleClipAt } from '@core/keyframes'
 import type { EditorState } from './editor-state'
 import {
   selectClips,
+  selectContentDuration,
   selectKeyboardCommandContext,
   selectSelectedGap,
   selectSelectedSubtitleId,
@@ -85,25 +86,43 @@ export function useEditorKeyboard(params: UseEditorKeyboardParams) {
 
         // Transport
         case 'transport.playPause':
-          if (state.session.transport.isPlaying) editorActions.pause()
-          else editorActions.play()
+          if (state.session.ui.previewAssetId) {
+            window.dispatchEvent(new CustomEvent('komfyedit:toggle-asset-preview-playback'))
+            break
+          }
+          if (state.session.transport.isPlaying) {
+            editorActions.pause()
+          } else {
+            const cd = selectContentDuration(state)
+            if (cd > 0 && (commandContext.currentTime >= cd - 0.04 || refs.playbackTimeRef.current >= cd - 0.04)) {
+              refs.playbackTimeRef.current = 0
+              editorActions.setCurrentTime(0)
+            }
+            editorActions.play()
+          }
           break
 
         case 'transport.stepBackward':
           editorActions.stepCurrentTime(-FRAME_DURATION)
           break
 
-        case 'transport.stepForward':
-          editorActions.setCurrentTime(Math.min(td, commandContext.currentTime + FRAME_DURATION))
+        case 'transport.stepForward': {
+          const cd = selectContentDuration(state)
+          const limit = cd > 0 ? cd : td
+          editorActions.setCurrentTime(Math.min(limit, commandContext.currentTime + FRAME_DURATION))
           break
+        }
 
         case 'transport.jumpBackward':
           editorActions.stepCurrentTime(-1)
           break
 
-        case 'transport.jumpForward':
-          editorActions.setCurrentTime(Math.min(td, commandContext.currentTime + 1))
+        case 'transport.jumpForward': {
+          const cd = selectContentDuration(state)
+          const limit = cd > 0 ? cd : td
+          editorActions.setCurrentTime(Math.min(limit, commandContext.currentTime + 1))
           break
+        }
 
         case 'transport.goToStart':
           editorActions.pause()

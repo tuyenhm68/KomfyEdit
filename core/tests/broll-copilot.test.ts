@@ -3,6 +3,10 @@ import {
   extractKeywords,
   detectBrollOpportunities,
   selectBaseFootageTrackIndex,
+  buildBrollSuggestionPrompt,
+  parseBrollSuggestions,
+  applyBrollSuggestions,
+  type BrollOpportunity,
 } from '../src/broll-copilot'
 import type { SubtitleClip, TimelineClip } from '../src/project-model'
 
@@ -240,6 +244,80 @@ describe('a talking-head video that the scan used to find nothing in', () => {
       { id: 'b', text: 'nửa sau cũng ngắn', startTime: 12, endTime: 15, trackIndex: 0 },
     ]
     expect(detectBrollOpportunities({ subtitles: twoHalves, existingClips: [video] })).toEqual([])
+  })
+})
+
+/**
+ * The content half, which now comes from the configured CLI.
+ *
+ * Word-frequency keywords used to stand in for a suggestion, so a spot about
+ * 3D model quality was labelled "#độ #chỉ #tạo" — words that were in the
+ * sentence but told the editor nothing about what to film.
+ */
+describe('B-roll suggestions from the CLI', () => {
+  const spots = [
+    { startTime: 9.1, endTime: 13.6, contextText: 'Trellis 2 tạo được độ bóng và độ nhám' },
+    { startTime: 16.6, endTime: 21.1, contextText: 'Mô hình dùng cho game và phim' },
+  ]
+
+  it('numbers the spots so an answer can be matched back to one', () => {
+    const prompt = buildBrollSuggestionPrompt(spots)
+    expect(prompt).toContain('1. [9.1s - 13.6s]')
+    expect(prompt).toContain('2. [16.6s - 21.1s]')
+    expect(prompt).toContain('Trellis 2 tạo được độ bóng')
+    expect(prompt).toContain('đúng 2 phần tử')
+  })
+
+  it('reads the JSON out of a reply with prose and a fence around it', () => {
+    const reply = 'Mình gợi ý thế này:\n\n```json\n' + JSON.stringify({
+      suggestions: [
+        { index: 1, suggestedPrompt: 'Cận cảnh bề mặt 3D xoay chậm', keywords: ['3d', 'render'] },
+      ],
+    }) + '\n```\n\nCần gì thêm cứ bảo.'
+    const parsed = parseBrollSuggestions(reply)
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0].suggestedPrompt).toBe('Cận cảnh bề mặt 3D xoay chậm')
+    expect(parsed[0].keywords).toEqual(['3d', 'render'])
+  })
+
+  it('drops entries with no suggestion rather than showing a blank row', () => {
+    const parsed = parseBrollSuggestions(JSON.stringify({
+      suggestions: [
+        { index: 1, suggestedPrompt: '   ', keywords: ['a'] },
+        { index: 2, suggestedPrompt: 'Có nội dung', keywords: [] },
+      ],
+    }))
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0].index).toBe(2)
+  })
+
+  it('returns nothing for a reply carrying no JSON, so the caller can say why', () => {
+    expect(parseBrollSuggestions('Xin lỗi, mình không nghĩ ra gợi ý nào.')).toEqual([])
+  })
+
+  const opp = (over: Partial<BrollOpportunity>): BrollOpportunity => ({
+    id: 'o', startTime: 0, endTime: 4.5, duration: 4.5,
+    contextText: '', keywords: ['cũ'], suggestedPrompt: 'cũ', ...over,
+  })
+
+  it('puts each suggestion on the spot its number names', () => {
+    const merged = applyBrollSuggestions(
+      [opp({ id: 'a' }), opp({ id: 'b' })],
+      [{ index: 2, suggestedPrompt: 'cảnh cho đoạn hai', keywords: ['hai'] }],
+    )
+    expect(merged[0].suggestedPrompt).toBe('cũ')
+    expect(merged[1].suggestedPrompt).toBe('cảnh cho đoạn hai')
+    expect(merged[1].keywords).toEqual(['hai'])
+  })
+
+  it('keeps the spot timings untouched — only the wording comes from the model', () => {
+    const before = opp({ id: 'a', startTime: 9.1, endTime: 13.6, duration: 4.5 })
+    const [after] = applyBrollSuggestions([before], [
+      { index: 1, suggestedPrompt: 'cảnh mới', keywords: ['mới'] },
+    ])
+    expect(after.startTime).toBe(9.1)
+    expect(after.endTime).toBe(13.6)
+    expect(after.duration).toBe(4.5)
   })
 })
 })

@@ -16,7 +16,7 @@ export interface EditPilotPromptContext {
 }
 
 /** Tool names, kept here so the prompt cannot drift from the MCP surface. */
-const READ_TOOLS = 'timeline_describe, timeline_summary, subtitle_list, media_list, filter_list, sticker_list, project_open, extract_highlights, suggest_broll'
+const READ_TOOLS = 'timeline_describe, timeline_summary, subtitle_list, media_list, filter_list, sticker_list, sfx_list, project_open, extract_highlights, suggest_broll'
 const OBSERVE_TOOLS = 'observe_silence, observe_scenes, observe_loudness, observe_filmstrip, transcribe'
 const WRITE_FLOW = 'edit_propose → render_preview → qc_check → edit_apply'
 /** Named in the prompt: a capability the agent is never told about goes unused. */
@@ -33,6 +33,7 @@ const SET_CANVAS_NOTE = 'set_canvas — đổi kích thước khung hình, fps v
 const SET_MASK_NOTE = 'set_mask — đặt hoặc gỡ mask cho clip (shape: rectangle, ellipse, linear; x, y, width, height, rotation, feather, invert)'
 const TEXT_PRESET_NOTE = 'add_text / apply_text_preset / apply_text_animation — tạo hoặc cập nhật chữ với preset (bold-punch, cinematic-gold, neon-cyan, lower-third, minimal-box, retro-sunset, headline-alert, elegant-serif, caption-bubble) và animation dựng sẵn trên keyframe (fly-in, slide-in, fade-in, pop, typewriter)'
 const STICKER_NOTE = 'add_sticker — chèn sticker (ảnh PNG/WebP có alpha) vào timeline trên track overlay (stickerId: star, heart, fire, sparkles, thumbs-up, check-badge, party-popper, warning, smile, cool-sunglasses, laugh-tears, arrow-neon, badge-sale, badge-new, trophy, lightning, hoặc đường dẫn file ảnh; startTime, duration, scale, positionX, positionY, rotation, opacity)'
+const SFX_NOTE = 'sfx_list & add_sfx — tra cứu và chèn hiệu ứng âm thanh (29 SFX: whoosh, pop, ding, alert, cash-register, sub-boom, coin, camera-shutter...) vào track audio A2 (sfxId, startTime, duration, trackIndex, volume)'
 const MARKER_NOTE = 'add_marker / delete_marker / update_marker — thêm, xoá hoặc cập nhật marker đánh dấu vị trí trên timeline (time, label, color)'
 const TRANSCRIBE_NOTE = 'transcribe vs observe_silence — dùng transcribe khi cần hiểu ngữ nghĩa lời nói, phân tích nội dung, tìm ý chính, lọc highlight hoặc ngắt câu/từ (hỗ trợ cả mốc thời gian chi tiết từng từ wordTimestamps); chỉ dùng observe_silence khi mục đích đơn thuần là phát hiện các đoạn im lặng/khoảng nghỉ âm lượng'
 const SMART_CAPTIONS_NOTE = 'import_srt / chunk_subtitles / add_subtitle — tạo phụ đề ngắn viral chuẩn Short-form (TikTok, Reels) với tuỳ chọn chunk: true (ngắt cụm ngắn 3-5 từ theo nhịp phát âm) và preset kiểu chữ: tiktok-classic (chữ trắng in đậm viền tương phản cao Safe Zone), viral-yellow (vàng neon viền đen), viral-neon (xanh neon), dark-box, center-punch'
@@ -40,6 +41,7 @@ const DYNAMIC_ZOOM_NOTE = 'punch_in_cut / punch_in_sequence — tạo nhịp d�
 const HIGHLIGHT_NOTE = 'extract_highlights & create_highlight_short — tự động phân tích và trích xuất 3-5 đoạn highlight viral nhất từ video dài/podcast, tạo short dọc 9:16 (1080x1920) kèm Title Card Hook 3 giây đầu giật tít'
 const BROLL_NOTE = 'suggest_broll & insert_broll — tự động phát hiện các đoạn nói dài (>5s) không đổi cảnh để gợi ý chèn clip B-roll minh hoạ; thao tác insert_broll tự động đặt lên track overlay (V2/V3), tắt tiếng clip B-roll và tạo fade in/out 0.25s'
 const TIMELINE_VARIANTS_NOTE = 'duplicate_timeline / switch_timeline / delete_timeline / set_timeline_variant — quản lý các phiên bản dựng (variants) để A/B Testing (ví dụ: tạo bản Variant A - Hook mạnh, Variant B - Subtitle nổi bật)'
+const AUTO_EDIT_NOTE = 'auto-edit — workflow tự động dựng toàn bộ video (timeline_describe → tận dụng transcript store → observe_silence và cắt khoảng lặng → phụ đề ngắn chunk_subtitles → suggest_broll & insert_broll với tư liệu phụ có sẵn → punch_in_sequence nhịp zoom luân phiên → qc_check → render_preview → ask_confirm → edit_apply); tuân thủ giới hạn mật độ hiệu ứng và tôn trọng yêu cầu tắt bước của người dùng'
 
 export function buildEditPilotSystemPrompt(context: EditPilotPromptContext): string {
   const lines: string[] = [
@@ -71,6 +73,7 @@ export function buildEditPilotSystemPrompt(context: EditPilotPromptContext): str
     `   ${SET_MASK_NOTE}.`,
     `   ${TEXT_PRESET_NOTE}.`,
     `   ${STICKER_NOTE}.`,
+    `   ${SFX_NOTE}.`,
     `   ${MARKER_NOTE}.`,
     `   ${TRANSCRIBE_NOTE}.`,
     `   ${SMART_CAPTIONS_NOTE}.`,
@@ -78,6 +81,7 @@ export function buildEditPilotSystemPrompt(context: EditPilotPromptContext): str
     `   ${HIGHLIGHT_NOTE}.`,
     `   ${BROLL_NOTE}.`,
     `   ${TIMELINE_VARIANTS_NOTE}.`,
+    `   ${AUTO_EDIT_NOTE}.`,
     '   Luôn gọi edit_propose trước khi edit_apply để đảm bảo an toàn.',
     '4. qc_check: Kiểm tra chất lượng sau khi sửa. Chỉ dừng khi phát sinh lỗi mới nghiêm trọng.',
     '',
@@ -140,6 +144,25 @@ export function buildEditPilotSystemPrompt(context: EditPilotPromptContext): str
     '  Nếu tìm được ít hơn người dùng mong đợi (0 hoặc 1-2 đoạn), hãy đo thêm một lần nữa với',
     '  minDurationSec nhỏ hơn (ví dụ 1.0) rồi cho họ biết còn bao nhiêu đoạn ngắn hơn, để họ chọn',
     '  có hạ ngưỡng hay không — thay vì im lặng cắt đúng vài đoạn rồi báo đã xong.',
+    '',
+    'QUY TRÌNH TỰ ĐỘNG DỰNG TOÀN BỘ (AUTO-EDIT WORKFLOW):',
+    '- Khi người dùng yêu cầu "tự dựng video này", "auto edit", hoặc "dựng hoàn chỉnh video":',
+    '  Đây là quy trình điều phối tuần tự kết hợp 4 kỹ năng: cắt khoảng lặng, phụ đề ngắn, B-roll và zoom cận cảnh luân phiên.',
+    '- THỨ TỰ BẮT BUỘC VÀ LÝ DO CỦA THỨ TỰ:',
+    '  1. timeline_describe: nắm cấu trúc tracks, clips, canvas và xác định track video gốc (dùng track chứa footage dài nhất, KHÔNG mặc định track 0 vì track phụ đề có thể nằm ở đầu).',
+    '  2. Đảm bảo transcript: kiểm tra transcript trong project/asset (core/src/transcript-store.ts); TUYỆT ĐỐI KHÔNG bóc băng lại nếu project đã có.',
+    '  3. observe_silence & cắt khoảng lặng: phải cắt TRƯỚC khi tạo sub/B-roll vì việc cắt trên track chính (V1) sẽ ripple làm lệch mốc thời gian.',
+    '  4. Phụ đề & chunk_subtitles: ngắt cụm 3-5 từ (preset tiktok-classic hoặc viral-yellow). Cần tạo sub trước B-roll vì suggest_broll đọc nội dung phụ đề trên timeline để tìm từ khoá.',
+    '  5. suggest_broll & insert_broll: CHỈ dùng tư liệu video/ảnh phụ ĐÃ CÓ trong project assets. Nếu project chỉ có 1 video chính duy nhất, PHẢI THÔNG BÁO CHO NGƯỜI DÙNG và BỎ QUA bước B-roll (tuyệt đối không chèn video chính lên chính nó). Chèn trên track overlay (V2/V3) kèm fade in/out 0.25s và tắt tiếng.',
+    '  6. punch_in_sequence: tạo nhịp zoom luân phiên 100% ↔ 115% trên track video gốc (chỉ áp dụng cho clip >= 2.0s).',
+    '  7. qc_check → render_preview → ask_confirm → edit_apply: kiểm tra QC không có lỗi, render preview ngắn, gọi ask_confirm dạng checklist (mỗi item BẮT BUỘC có startSec/endSec để người dùng bấm xem trước) và CHỜ người dùng xác nhận mới gọi edit_apply.',
+    '- GIỚI HẠN MẬT ĐỘ HIỆU ỨNG (CHỐNG BỘI THỰC HIỆU ỨNG):',
+    '  + B-roll: tối đa 1 overlay mỗi 4 giây, độ dài 3s-5s.',
+    '  + Dynamic Zoom: tối đa 1 punch-in mỗi 8 giây, chỉ zoom clip >= 2.0s, scale 115%-120%.',
+    '  + Phụ đề: 3-5 từ/chunk, không chèn quá nhiều dòng.',
+    '  + Bố trí Text Overlays & Emotion Stickers (Chống đè hình - Anti-Collision):',
+    '    Khi chèn tiêu đề kết hợp icon emotion minh hoạ, luôn dùng bố cục Stacked Badge (Huy hiệu xếp tầng): Sticker ở trên (positionY: -35% đến -37%, scale: 25%-28%), Text ở ngay dưới (positionY: 26%, positionX: 50%, fontSize: 44-56px). Tuyệt đối không đặt cùng cao độ Y tương đối để tránh đè lên nhau.',
+    '- TẮT BƯỚC THEO YÊU CẦU: Nếu người dùng nói "đừng chèn B-roll", "không zoom", hoặc "chỉ cắt khoảng lặng và thêm sub", hãy bỏ qua các bước tương ứng theo đúng ý họ.',
     '',
     'QUAN TRỌNG VỀ KHUNG HÌNH (CANVAS) VÀ TRANSFORM:',
     '- Gọi timeline_describe để biết kích thước khung hình hiện tại (width, height, fps, aspectRatio, background).',

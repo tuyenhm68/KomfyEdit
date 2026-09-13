@@ -328,7 +328,7 @@ function SingleClipMenu({
           <button
             key={speed}
             onClick={() => {
-              const oldSpeed = contextClip.speed
+              const oldSpeed = contextClip.speed || 1
               let newDuration = contextClip.duration * (oldSpeed / speed)
               const maxDur = getMaxClipDuration({ ...contextClip, speed })
               newDuration = Math.min(newDuration, maxDur)

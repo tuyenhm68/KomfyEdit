@@ -155,12 +155,48 @@ export function useBuildMenuDefinitions(p: MenuDepsParams): MenuDefinition[] {
           disabled: !menuState.selectedClip,
         },
         { id: 'sep-3', label: '', separator: true },
-        { id: 'speed-025', label: 'Speed: 0.25x', action: () => menuState.selectedClip && actions.updateClip(menuState.selectedClip.id, { speed: 0.25 }), disabled: !menuState.selectedClip },
-        { id: 'speed-050', label: 'Speed: 0.5x', action: () => menuState.selectedClip && actions.updateClip(menuState.selectedClip.id, { speed: 0.5 }), disabled: !menuState.selectedClip },
-        { id: 'speed-100', label: 'Speed: 1x (Normal)', action: () => menuState.selectedClip && actions.updateClip(menuState.selectedClip.id, { speed: 1 }), disabled: !menuState.selectedClip },
-        { id: 'speed-150', label: 'Speed: 1.5x', action: () => menuState.selectedClip && actions.updateClip(menuState.selectedClip.id, { speed: 1.5 }), disabled: !menuState.selectedClip },
-        { id: 'speed-200', label: 'Speed: 2x', action: () => menuState.selectedClip && actions.updateClip(menuState.selectedClip.id, { speed: 2 }), disabled: !menuState.selectedClip },
-        { id: 'speed-400', label: 'Speed: 4x', action: () => menuState.selectedClip && actions.updateClip(menuState.selectedClip.id, { speed: 4 }), disabled: !menuState.selectedClip },
+        { id: 'speed-025', label: 'Speed: 0.25x', action: () => {
+          if (!menuState.selectedClip) return
+          const clip = menuState.selectedClip
+          const oldSpeed = clip.speed ?? 1
+          const newDuration = Math.max(0.1, clip.duration * (oldSpeed / 0.25))
+          actions.setClipSpeed(clip.id, 0.25, newDuration)
+        }, disabled: !menuState.selectedClip },
+        { id: 'speed-050', label: 'Speed: 0.5x', action: () => {
+          if (!menuState.selectedClip) return
+          const clip = menuState.selectedClip
+          const oldSpeed = clip.speed ?? 1
+          const newDuration = Math.max(0.1, clip.duration * (oldSpeed / 0.5))
+          actions.setClipSpeed(clip.id, 0.5, newDuration)
+        }, disabled: !menuState.selectedClip },
+        { id: 'speed-100', label: 'Speed: 1x (Normal)', action: () => {
+          if (!menuState.selectedClip) return
+          const clip = menuState.selectedClip
+          const oldSpeed = clip.speed ?? 1
+          const newDuration = Math.max(0.1, clip.duration * (oldSpeed / 1))
+          actions.setClipSpeed(clip.id, 1, newDuration)
+        }, disabled: !menuState.selectedClip },
+        { id: 'speed-150', label: 'Speed: 1.5x', action: () => {
+          if (!menuState.selectedClip) return
+          const clip = menuState.selectedClip
+          const oldSpeed = clip.speed ?? 1
+          const newDuration = Math.max(0.1, clip.duration * (oldSpeed / 1.5))
+          actions.setClipSpeed(clip.id, 1.5, newDuration)
+        }, disabled: !menuState.selectedClip },
+        { id: 'speed-200', label: 'Speed: 2x', action: () => {
+          if (!menuState.selectedClip) return
+          const clip = menuState.selectedClip
+          const oldSpeed = clip.speed ?? 1
+          const newDuration = Math.max(0.1, clip.duration * (oldSpeed / 2))
+          actions.setClipSpeed(clip.id, 2, newDuration)
+        }, disabled: !menuState.selectedClip },
+        { id: 'speed-400', label: 'Speed: 4x', action: () => {
+          if (!menuState.selectedClip) return
+          const clip = menuState.selectedClip
+          const oldSpeed = clip.speed ?? 1
+          const newDuration = Math.max(0.1, clip.duration * (oldSpeed / 4))
+          actions.setClipSpeed(clip.id, 4, newDuration)
+        }, disabled: !menuState.selectedClip },
       ],
     },
     {

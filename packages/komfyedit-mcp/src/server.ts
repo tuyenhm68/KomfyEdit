@@ -27,6 +27,8 @@ import {
   FILTER_CATEGORIES,
   STICKER_DEFINITIONS,
   STICKER_CATEGORIES,
+  SFX_DEFINITIONS,
+  SFX_CATEGORIES,
   getEffectiveTimelineDimensions,
   type Project,
   type Timeline,
@@ -410,7 +412,20 @@ export const READ_ONLY_TOOLS: Tool[] = [
       properties: {
         category: {
           type: 'string',
-          description: 'Optional category to filter by ("emoji", "badge", "arrow", "icon").',
+          description: 'Optional category to filter by ("emoji", "badge", "arrow", "icon", "animated").',
+        },
+      },
+    },
+  },
+  {
+    name: 'sfx_list',
+    description: 'List available built-in sound effects (16-bit WAV) with ID, name, category, duration, description, and keywords for use with add_sfx.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        category: {
+          type: 'string',
+          description: 'Optional category to filter by ("transition", "accent", "notification", "impact", "comedy", "foley").',
         },
       },
     },
@@ -1174,9 +1189,11 @@ export class KomfyEditMcpServer {
 
           case 'sticker_list': {
             const category = (toolArgs.category as string | undefined)?.toLowerCase()
-            const stickers = category
-              ? STICKER_DEFINITIONS.filter(s => s.category === category)
-              : STICKER_DEFINITIONS
+            const stickers = category === 'animated'
+              ? STICKER_DEFINITIONS.filter(s => s.isAnimated)
+              : category
+                ? STICKER_DEFINITIONS.filter(s => s.category === category)
+                : STICKER_DEFINITIONS
             return {
               content: [
                 {
@@ -1190,6 +1207,38 @@ export class KomfyEditMcpServer {
                         name: s.name,
                         category: s.category,
                         filename: s.filename,
+                        keywords: s.keywords,
+                        isAnimated: s.isAnimated ?? false,
+                      })),
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            }
+          }
+
+          case 'sfx_list': {
+            const category = (toolArgs.category as string | undefined)?.toLowerCase()
+            const sfxItems = category
+              ? SFX_DEFINITIONS.filter(s => s.category === category)
+              : SFX_DEFINITIONS
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      categories: SFX_CATEGORIES,
+                      total: sfxItems.length,
+                      sfx: sfxItems.map(s => ({
+                        id: s.id,
+                        name: s.name,
+                        category: s.category,
+                        filename: s.filename,
+                        duration: s.duration,
+                        description: s.description,
                         keywords: s.keywords,
                       })),
                     },

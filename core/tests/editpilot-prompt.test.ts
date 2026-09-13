@@ -101,4 +101,31 @@ describe('buildEditPilotSystemPrompt', () => {
     expect(rules).toContain('minDurationSec')
     expect(rules).toMatch(/ít hơn người dùng mong đợi/i)
   })
+
+  it('instructs the agent on the auto-edit workflow sequence, safety rules, density limits and confirmation', () => {
+    const prompt = buildEditPilotSystemPrompt({ projectId: 'p1' })
+    expect(prompt).toContain('auto-edit')
+    const autoEditRules = prompt.slice(prompt.indexOf('AUTO-EDIT WORKFLOW'))
+
+    // Sequence tools
+    expect(autoEditRules).toContain('timeline_describe')
+    expect(autoEditRules).toContain('transcript-store')
+    expect(autoEditRules).toContain('observe_silence')
+    expect(autoEditRules).toContain('chunk_subtitles')
+    expect(autoEditRules).toContain('suggest_broll')
+    expect(autoEditRules).toContain('punch_in_sequence')
+    expect(autoEditRules).toContain('qc_check')
+    expect(autoEditRules).toContain('render_preview')
+    expect(autoEditRules).toContain('ask_confirm')
+    expect(autoEditRules).toContain('edit_apply')
+
+    // Key invariant rules
+    expect(autoEditRules).toMatch(/TUYỆT ĐỐI KHÔNG bóc băng lại nếu project đã có/i)
+    expect(autoEditRules).toMatch(/tuyệt đối không chèn video chính lên chính nó/i)
+    expect(autoEditRules).toMatch(/GIỚI HẠN MẬT ĐỘ HIỆU ỨNG/i)
+    expect(autoEditRules).toMatch(/tối đa 1 overlay mỗi 4 giây/i)
+    expect(autoEditRules).toMatch(/tối đa 1 punch-in mỗi 8 giây/i)
+    expect(autoEditRules).toMatch(/startSec/i)
+    expect(autoEditRules).toMatch(/TẮT BƯỚC THEO YÊU CẦU/i)
+  })
 })

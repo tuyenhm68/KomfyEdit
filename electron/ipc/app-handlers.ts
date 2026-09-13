@@ -7,6 +7,7 @@ import { checkForUpdatesManually } from '../updater'
 
 import { proxyManager } from '../export/proxy-manager'
 import { renderCacheManager } from '../export/render-cache-manager'
+import { removeEntry } from '../storage/remove-entry'
 
 export function registerAppHandlers(): void {
   handle('getAppInfo', () => {
@@ -135,7 +136,7 @@ export function registerAppHandlers(): void {
               freedBytes += fs.statSync(fullPath).size
               fs.unlinkSync(fullPath)
             } else if (entry.isDirectory()) {
-              fs.rmSync(fullPath, { recursive: true, force: true })
+              removeEntry(fullPath)
             }
           } catch {}
         }

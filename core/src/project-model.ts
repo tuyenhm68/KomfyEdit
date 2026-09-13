@@ -382,7 +382,7 @@ export const assetSchema = z.object({
    * the only kind the media panel lists — anything the app created on the
    * user's behalf is still needed for clip lookups but stays out of that list.
    */
-  source: z.enum(['sticker']).optional(),
+  source: z.enum(['sticker', 'sfx']).optional(),
   /**
    * Whether `width`/`height` are the size a player shows rather than the size
    * the stream is stored at. Import used to read the stream size and ignore the

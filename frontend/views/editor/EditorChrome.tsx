@@ -13,6 +13,7 @@ import {
   Music2,
   Share2,
   SlidersHorizontal,
+  LayoutTemplate,
   Sparkles,
   Sticker,
   Type,
@@ -211,6 +212,7 @@ export const LIBRARY_TABS: TabDefinition[] = [
   { id: 'captions',    label: 'Captions',    icon: CaptionsIcon,      defaultSection: 'local-captions' },
   { id: 'filters',     label: 'Filters',     icon: Aperture,          defaultSection: 'filters' },
   { id: 'adjust',      label: 'Adjust',      icon: SlidersHorizontal, defaultSection: 'adjust' },
+  { id: 'templates',   label: 'Templates',   icon: LayoutTemplate,    defaultSection: 'templates' },
 ]
 
 export interface EditorTabRailProps {
@@ -312,6 +314,7 @@ interface NavEntry {
 const NAV_LABEL_KEYS: Record<string, string> = {
   media: 'library.nav.media',
   'audio-files': 'library.nav.audioFiles',
+  'sound-effects': 'library.nav.soundEffects',
   extract: 'library.nav.extractAudio',
   'add-text': 'library.nav.addText',
   'text-templates': 'library.nav.textTemplates',
@@ -333,6 +336,7 @@ const NAV_BY_TAB: Record<LibraryTab, NavEntry[]> = {
   ],
   audio: [
     { id: 'audio-files', label: 'Audio files' },
+    { id: 'sound-effects', label: 'Sound effects' },
     { id: 'extract', label: 'Extract audio' },
   ],
   text: [
@@ -360,6 +364,14 @@ const NAV_BY_TAB: Record<LibraryTab, NavEntry[]> = {
   ],
   adjust: [
     { id: 'adjust', label: 'Adjust' },
+  ],
+  templates: [
+    { id: 'templates', label: 'All' },
+    { id: 'tpl-yours', label: 'Yours' },
+    { id: 'tpl-opener', label: 'Openers' },
+    { id: 'tpl-montage', label: 'Montage' },
+    { id: 'tpl-compare', label: 'Compare' },
+    { id: 'tpl-text', label: 'Text' },
   ],
 }
 

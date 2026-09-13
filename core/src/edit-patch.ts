@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { EditorState } from './editor-state'
 import { selectClips, selectActiveTimeline } from './editor-selectors'
+import { komfyTemplateSchema } from './template-model'
 import {
   deleteClips,
   splitClipsAtTime,
@@ -33,6 +34,7 @@ import {
   applyTextPresetToClip,
   applyTextAnimationToClip,
   addStickerClip,
+  addSfxClip,
   addMarker,
   deleteMarker,
   updateMarker,
@@ -40,6 +42,7 @@ import {
   punchInClip,
   punchInSequence,
   createHighlightShort,
+  applyTemplateAsTimeline,
   insertBrollClip,
   duplicateTimeline,
   deleteTimeline,
@@ -48,6 +51,7 @@ import {
 } from './editor-actions'
 import { getTextPreset, getTextAnimation, getSubtitlePreset, applySubtitlePreset } from './text-presets'
 import { getStickerDefinition } from './stickers'
+import { getSfxDefinition } from './sfx'
 import { keyframePropertySchema, keyframeEasingSchema, timelineBackgroundSchema, clipMaskSchema, chromaKeySchema } from './project-model'
 import { clipBlendModeSchema } from './blend-modes'
 import { makeId } from './id-generator'
@@ -178,6 +182,15 @@ export const editPatchOperationSchema = z.discriminatedUnion('op', [
     positionY: z.number().optional(),
     rotation: z.number().optional(),
     opacity: z.number().min(0).max(100).optional(),
+  }),
+  z.object({
+    op: z.literal('add_sfx'),
+    /** Built-in sound effect id (e.g. 'whoosh', 'ding', 'pop') or filename. */
+    sfxId: z.string().min(1, 'sfxId is required'),
+    startTime: z.number().min(0, 'startTime must be non-negative').optional(),
+    duration: z.number().positive('duration must be positive').optional(),
+    trackIndex: z.number().int().min(0).optional(),
+    volume: z.number().min(0).max(4).optional(),
   }),
   z.object({
     op: z.literal('set_transition'),
@@ -392,6 +405,26 @@ export const editPatchOperationSchema = z.discriminatedUnion('op', [
     name: z.string().optional(),
     variantTag: z.string().optional(),
     description: z.string().optional(),
+  }),
+  /*
+   * Applying a saved template. The template itself travels inline rather than
+   * by name: the agent may be looking at a template file the app has never
+   * loaded, and a patch that depends on the app's current library would
+   * describe one thing and do another on a different machine.
+   *
+   * `bindings` says which project asset fills which slot. A slot nobody binds
+   * is left empty on purpose — an unfilled hole the user can see beats media
+   * chosen for them.
+   */
+  z.object({
+    op: z.literal('apply_template'),
+    template: komfyTemplateSchema,
+    bindings: z.array(z.object({
+      slotIndex: z.number().int().positive(),
+      assetId: z.string().min(1, 'assetId is required'),
+    })).default([]),
+    name: z.string().optional(),
+    variantTag: z.string().optional(),
   }),
 ])
 
@@ -973,6 +1006,23 @@ export function validateEditPatch(state: EditorState, rawPatch: unknown): PatchV
         }
       }
     }
+    if (op.op === 'add_sfx') {
+      if (op.trackIndex !== undefined) {
+        if (op.trackIndex < 0 || op.trackIndex >= activeTimeline.tracks.length) {
+          return {
+            valid: false,
+            error: `Operation #${i + 1} (${op.op}): Track index #${op.trackIndex} does not exist in timeline`,
+          }
+        }
+        const track = trackMap.get(op.trackIndex)
+        if (track?.locked) {
+          return {
+            valid: false,
+            error: `Operation #${i + 1} (${op.op}): Cannot add SFX onto locked track #${op.trackIndex}`,
+          }
+        }
+      }
+    }
     if (op.op === 'set_timeline_dimensions') {
       if (op.timelineId && !state.editorModel.timelines.some(t => t.id === op.timelineId)) {
         return {
@@ -1157,6 +1207,45 @@ export function validateEditPatch(state: EditorState, rawPatch: unknown): PatchV
         }
       }
     }
+    if (op.op === 'apply_template') {
+      // A template with no slots is a fixed edit nobody can put footage into.
+      // It would apply cleanly and produce a timeline the user cannot use.
+      if (op.template.slots.length === 0) {
+        return {
+          valid: false,
+          error: `Operation #${i + 1} (apply_template): Template "${op.template.name}" has no slots to fill`,
+        }
+      }
+      const slotIndexes = new Set(op.template.slots.map(slot => slot.slotIndex))
+      for (const binding of op.bindings) {
+        if (!slotIndexes.has(binding.slotIndex)) {
+          return {
+            valid: false,
+            error: `Operation #${i + 1} (apply_template): Slot #${binding.slotIndex} does not exist in template "${op.template.name}"`,
+          }
+        }
+        // Bind to an asset this project does not have and the slot silently
+        // stays empty, which reads as the template being broken.
+        if (!state.editorModel.assets.some(asset => asset.id === binding.assetId)) {
+          return {
+            valid: false,
+            error: `Operation #${i + 1} (apply_template): Asset ID "${binding.assetId}" does not exist in project`,
+          }
+        }
+      }
+      // Two clips in one hole: the later binding would win and the first
+      // asset would vanish without a word.
+      const seen = new Set<number>()
+      for (const binding of op.bindings) {
+        if (seen.has(binding.slotIndex)) {
+          return {
+            valid: false,
+            error: `Operation #${i + 1} (apply_template): Slot #${binding.slotIndex} is bound more than once`,
+          }
+        }
+        seen.add(binding.slotIndex)
+      }
+    }
     if (op.op === 'switch_timeline') {
       if (!state.editorModel.timelines.some(t => t.id === op.timelineId)) {
         return {
@@ -1292,6 +1381,8 @@ export function describePatch(state: EditorState, patch: EditPatch): string {
   const textAnimsApplied: string[] = []
   let addStickerCount = 0
   const stickerNamesApplied: string[] = []
+  let addSfxCount = 0
+  const sfxNamesApplied: string[] = []
   let addMarkerCount = 0
   let deleteMarkerCount = 0
   let updateMarkerCount = 0
@@ -1349,6 +1440,10 @@ export function describePatch(state: EditorState, patch: EditPatch): string {
       addStickerCount++
       const def = getStickerDefinition(op.stickerId)
       stickerNamesApplied.push(def?.name || op.stickerId)
+    } else if (op.op === 'add_sfx') {
+      addSfxCount++
+      const def = getSfxDefinition(op.sfxId)
+      sfxNamesApplied.push(def?.name || op.sfxId)
     } else if (op.op === 'add_subtitle_track') {
       addSubTrackCount++
     } else if (op.op === 'set_transition') {
@@ -1487,6 +1582,16 @@ export function describePatch(state: EditorState, patch: EditPatch): string {
       const tagMsg = op.variantTag ? ` tag="${op.variantTag}"` : ''
       const nameMsg = op.name ? ` name="${op.name}"` : ''
       keyframeDescriptions.push(`update variant info${nameMsg}${tagMsg}`)
+    } else if (op.op === 'apply_template') {
+      // Say how many holes get filled and how many are left: an applied
+      // template with three of its six slots empty looks broken, and the
+      // reviewer should know that before approving, not after.
+      const filled = op.bindings.length
+      const total = op.template.slots.length
+      const emptyMsg = filled < total ? `, ${total - filled} slot(s) left empty` : ''
+      keyframeDescriptions.push(
+        `apply template "${op.template.name}" as a new timeline (${filled}/${total} slots filled${emptyMsg})`,
+      )
     } else {
       otherCount++
     }
@@ -1542,6 +1647,11 @@ export function describePatch(state: EditorState, patch: EditPatch): string {
     const list = stickerNamesApplied.slice(0, 3).join(', ')
     const more = stickerNamesApplied.length > 3 ? ` and ${stickerNamesApplied.length - 3} more` : ''
     parts.push(`add ${addStickerCount} stickers (${list}${more})`)
+  }
+  if (addSfxCount > 0) {
+    const list = sfxNamesApplied.slice(0, 3).join(', ')
+    const more = sfxNamesApplied.length > 3 ? ` and ${sfxNamesApplied.length - 3} more` : ''
+    parts.push(`add ${addSfxCount} sound effects (${list}${more})`)
   }
   if (setTransitionCount > 0) {
     parts.push(`set ${setTransitionCount} transitions`)
@@ -1801,6 +1911,7 @@ function executePatchOperations(state: EditorState, operations: EditPatchOperati
             ...(op.style as any || {}),
           },
           startTime: op.startTime,
+          duration: op.duration,
           trackIndex: op.trackIndex,
           preset: op.preset,
           animation: op.animation,
@@ -1826,6 +1937,16 @@ function executePatchOperations(state: EditorState, operations: EditPatchOperati
           positionY: op.positionY,
           rotation: op.rotation,
           opacity: op.opacity,
+        })
+        break
+      }
+      case 'add_sfx': {
+        current = addSfxClip(current, {
+          sfxId: op.sfxId,
+          startTime: op.startTime,
+          duration: op.duration,
+          trackIndex: op.trackIndex,
+          volume: op.volume,
         })
         break
       }
@@ -2080,6 +2201,15 @@ function executePatchOperations(state: EditorState, operations: EditPatchOperati
             description: op.description,
           })
         }
+        break
+      }
+      case 'apply_template': {
+        current = applyTemplateAsTimeline(current, {
+          template: op.template,
+          bindings: op.bindings,
+          name: op.name,
+          variantTag: op.variantTag,
+        })
         break
       }
     }
