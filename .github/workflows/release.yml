@@ -78,6 +78,17 @@ jobs:
       - name: Run unit tests
         run: pnpm run test:run
 
+      # Pre-create the GitHub Release before the parallel build matrix starts.
+      # This guarantees that all platform runners upload assets to the exact
+      # same release rather than racing and creating duplicate draft releases.
+      - name: Initialize GitHub Release
+        if: github.ref_type == 'tag'
+        run: node scripts/init-release.cjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
   build:
     name: Build ${{ matrix.name }}
     needs: verify
